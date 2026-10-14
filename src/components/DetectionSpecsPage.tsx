@@ -20,7 +20,7 @@ interface DetectionSpecsPageProps {
 
 export const DetectionSpecsPage: React.FC<DetectionSpecsPageProps> = ({
   profiles = getAllEngineProfiles(),
-  initialProfileId = 'bundler',
+  initialProfileId = 'url-matrix',
 }) => {
   const [selectedId, setSelectedId] = useState<string>(initialProfileId);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);

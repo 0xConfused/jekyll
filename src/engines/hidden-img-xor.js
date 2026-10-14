@@ -121,7 +121,7 @@ function isValidImgContainer(el) {
 
 export const engine = {
   id: 'hidden-img-xor',
-  label: 'Hidden Image XOR (onload loader)',
+  label: 'Hidden Image XOR',
   description:
     'XOR-encrypts the JS payload with a JPEG-header-derived key, hides it in an ' +
     'invisible random-style <img>, and executes it via a randomly placed onload ' +

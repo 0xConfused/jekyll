@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * url-matrix.js — Port of drJekyll.py. Every character of the JS payload
+ * url-matrix.js — URL string matrix encoder. Every character of the JS payload
  * is remapped onto literal Node.js documentation URL strings; characters not
  * found (uppercase, emoji, ...) are rebuilt via hex codepoint instructions.
  * Round-trip verified before output. The obfuscated result is injected into
@@ -107,7 +107,7 @@ const _d=${urlsJson},_b="${payloadB64}";let _f;try{_f=atob(_b)}catch(e){_f=Buffe
 
 export const engine = {
   id: 'url-matrix',
-  label: 'URL String Matrix (Dr. Jekyll)',
+  label: 'URL String Matrix',
   description:
     'Obfuscates the JS payload by mapping every character onto literal Node.js doc ' +
     'URL strings (hex fallback for missing chars), round-trip verified, then injected.',

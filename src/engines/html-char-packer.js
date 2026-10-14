@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * html-char-packer.js — Port of mrHyde.py. Repacks the JS payload into a
+ * html-char-packer.js — HTML charset packing engine. Repacks the JS payload into a
  * minified unpacker that rebuilds it from unique-character indices harvested
  * from the page's own HTML. Fixed-width base-93 index tokens with run-length
  * encoding; characters missing from the HTML are stored behind a literal
@@ -128,7 +128,7 @@ function buildBlock(html, js) {
 
 export const engine = {
   id: 'html-char-packer',
-  label: 'HTML Charset Packer (Mr. Hyde)',
+  label: 'HTML Charset Packer',
   description:
     'Repacks the JS payload so it rebuilds at runtime from character indices taken ' +
     'from the HTML itself (base-93 RLE stream, literal fallback for missing chars). ' +

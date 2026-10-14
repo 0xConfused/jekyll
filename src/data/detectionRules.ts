@@ -33,399 +33,384 @@ export interface ProfileDetectionSpec {
 }
 
 export const PROFILE_DETECTION_SPECS: Record<string, ProfileDetectionSpec> = {
-  bundler: {
-    profileId: 'bundler',
-    profileLabel: 'Standard Standalone Bundler',
-    title: 'Monolithic Inlined HTML-JS Payload Detection',
-    category: 'Client-Side Infiltration / Script Bundling',
-    severity: 'MEDIUM',
-    mitreTechnique: 'T1059.007',
-    mitreTactics: ['Execution', 'Defense Evasion'],
+  'url-matrix': {
+    profileId: 'url-matrix',
+    profileLabel: 'URL String Matrix',
+    title: 'Node.js Documentation URL Matrix Obfuscation Detection',
+    category: 'Defense Evasion / String Character Mapping',
+    severity: 'HIGH',
+    mitreTechnique: 'T1027',
+    mitreTactics: ['Defense Evasion', 'Execution'],
     summary:
-      'Detects HTML documents with inlined monolithic JavaScript code blocks concatenated directly into DOM termination boundaries or template delimiters without external script references.',
+      'Detects JavaScript payloads decomposed into character coordinates mapped onto literal Node.js documentation URL strings and reconstituted in memory via Function constructor.',
     yaraRule: {
-      ruleName: 'Exploit_Script_Bundler_HTML_Injection',
-      description: 'Identifies monolithic HTML files compiled via direct script inlining and bundler timestamp banners',
-      code: `rule Exploit_Script_Bundler_HTML_Injection
+      ruleName: 'Exploit_URL_Matrix_Obfuscator',
+      description: 'Identifies scripts reconstituting payloads via Node.js API documentation URL index lookups',
+      code: `rule Exploit_URL_Matrix_Obfuscator
 {
     meta:
         author = "0xCONFUSED Cyber Operations"
-        description = "Detects standalone HTML artifacts containing bundled JavaScript injection payloads"
-        severity = "MEDIUM"
-        mitre_technique = "T1059.007"
-        date = "2026-10-11"
+        description = "Detects URL matrix string decomposition payloads"
+        severity = "HIGH"
+        mitre_technique = "T1027"
+        date = "2026-10-14"
         license = "AGPL-3.0-or-later"
 
     strings:
-        $html_doctype = "<!DOCTYPE html>" nocase
-        $html_body    = "</body>" nocase
-        $script_open  = "<script type=\\"text/javascript\\">" nocase
-        $bundler_tag1 = "/* Bundled at " ascii
-        $bundler_tag2 = "<!-- INJECT_JS -->" ascii
-        $bundler_tag3 = "<!-- SCRIPT -->" ascii
+        $nodejs_url1 = "https://nodejs.org/api/crypto.html" ascii
+        $nodejs_url2 = "https://nodejs.org/api/querystring.html" ascii
+        $unpack_loop = "while(i<_f.length)" ascii
+        $char_code   = "charCodeAt" ascii
+        $func_exec   = "new Function(_p)" ascii
 
     condition:
         filesize < 25MB and
-        $html_doctype and
-        $html_body and
-        $script_open and
-        (any of ($bundler_tag*))
+        ($nodejs_url1 or $nodejs_url2) and
+        $unpack_loop and
+        $func_exec
 }`,
     },
     regexDetections: [
       {
-        id: 'bundler-timestamp-comment',
-        name: 'Bundler Timestamp Comment Signature',
-        pattern: '<script[^>]*>\\s*/\\*\\s*Bundled at \\d{4}-\\d{2}-\\d{2}T[0-9:.]+Z?\\s*\\*/',
-        flags: 'is',
-        flavor: 'PCRE',
-        description: 'Matches the standardized timestamp banner prepended to inlined JavaScript payload blocks.',
-        sampleMatch: '<script type="text/javascript">\n/* Bundled at 2026-10-11T12:00:00Z */\nconsole.log(1);',
+        id: 'url-matrix-url-dataset',
+        name: 'Node.js Documentation URL Dataset Array',
+        pattern: `const\\s+_d\\s*=\\s*\\["https:\\/\\/nodejs\\.org\\/api\\/crypto\\.html"`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Matches the characteristic Node.js URL matrix array definition header.',
+        sampleMatch: 'const _d=["https://nodejs.org/api/crypto.html","https://nodejs.org/api/querystring.html"',
       },
       {
-        id: 'bundler-terminal-body-injection',
-        name: 'Terminal Body Monolithic Script Block',
-        pattern: '<script\\s+type=["\']text/javascript["\']>[\\s\\S]{300,}</script>\\s*</body>',
-        flags: 'i',
-        flavor: 'PCRE',
-        description: 'Detects heavy inlined JavaScript (>300 chars) appended immediately adjacent to the closing body tag.',
-        sampleMatch: '<script type="text/javascript">\nvar payload = "..."\n</script>\n</body>',
-      },
-      {
-        id: 'bundler-template-marker',
-        name: 'Residual Template Insertion Marker',
-        pattern: '<!--\\s*(?:INJECT_JS|SCRIPT)\\s*-->',
-        flags: 'i',
-        flavor: 'Snort/Suricata',
-        description: 'Detects unparsed or residual bundler hook comments in HTML stream transmissions.',
-        sampleMatch: '<!-- INJECT_JS -->',
+        id: 'url-matrix-unpack-routine',
+        name: 'Matrix Byte Unpacking and Function Execution',
+        pattern: `new\\s+Function\\(_p\\)\\(\\);\\}\\s*catch\\(e\\)\\{console\\.error\\("Matrix corrupted\\."`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Identifies the execution block compiling and invoking the reconstituted payload.',
+        sampleMatch: 'new Function(_p)();}catch(e){console.error("Matrix corrupted.",e)}}());',
       },
     ],
     siemDetections: [
       {
         platform: 'Sigma',
-        query: `title: Inlined Script Bundler HTML Artifact Delivery
-status: production
+        query: `title: Suspicious Node.js URL Character Matrix Script
+status: experimental
+description: Detects HTML documents containing Node.js URL matrix character mapping payloads
 logsource:
-    category: webserver
-    product: proxy
+  category: web_content
 detection:
-    selection:
-        http.response.body|contains:
-            - '<script type="text/javascript">'
-            - '/* Bundled at '
-        http.response.content_type: 'text/html'
-    condition: selection
-level: medium`,
-      },
-      {
-        platform: 'Splunk',
-        query: `index=proxy sourcetype=access_combined status=200 http_content_type="text/html*"
-| rex field=_raw "<script[^>]*>\\s*/\\*\\s*Bundled at (?<bundle_time>[^\\*]+)\\*/"
-| where isnotnull(bundle_time)
-| table _time, clientip, uri, bundle_time`,
+  selection:
+    Content|contains:
+      - 'https://nodejs.org/api/crypto.html'
+      - 'new Function(_p)'
+  condition: selection`,
       },
     ],
     mitigationAdvice:
-      'Enforce external script loading via integrity-pinned subresource hashes (SRI). Disallow inline scripts in production environments using a Content-Security-Policy header omitting "unsafe-inline".',
+      'Enforce strict Content Security Policy (CSP) headers without unsafe-eval. Disable runtime Dynamic Code Generation (script-src without unsafe-eval).',
   },
 
-  hardener: {
-    profileId: 'hardener',
-    profileLabel: 'Security Hardened Assembler',
-    title: 'Synthetic Content Security Policy Hash Injection Detection',
-    category: 'Policy Manipulation / Integrity Bypass',
-    severity: 'LOW',
-    mitreTechnique: 'T1562.001',
+  'html-char-packer': {
+    profileId: 'html-char-packer',
+    profileLabel: 'HTML Charset Packer',
+    title: 'HTML Harvesting Character Index Repacker Detection',
+    category: 'Defense Evasion / Dynamic Decoding',
+    severity: 'HIGH',
+    mitreTechnique: 'T1027',
+    mitreTactics: ['Defense Evasion', 'Execution'],
+    summary:
+      'Detects JavaScript payloads encoded into base-93 index streams reconstituted at runtime from character sets harvested from the surrounding HTML document and evaluated via indirect eval.',
+    yaraRule: {
+      ruleName: 'Exploit_HTML_Charset_Packer',
+      description: 'Matches HTML-harvested character index unpacking routines',
+      code: `rule Exploit_HTML_Charset_Packer
+{
+    meta:
+        author = "0xCONFUSED Cyber Operations"
+        description = "Detects HTML charset index unpacking routines"
+        severity = "HIGH"
+        mitre_technique = "T1027"
+        date = "2026-10-14"
+        license = "AGPL-3.0-or-later"
+
+    strings:
+        $unpacker_hdr  = "var C=" ascii
+        $unpacker_vars = ",P=" ascii
+        $unpacker_w    = ",W=" ascii
+        $indirect_eval = "(0,eval)(o)" ascii
+        $char_marker   = "!\"&&k!=\"#\"" ascii
+
+    condition:
+        filesize < 25MB and
+        $unpacker_hdr and
+        $unpacker_vars and
+        $indirect_eval
+}`,
+    },
+    regexDetections: [
+      {
+        id: 'char-packer-unpack-template',
+        name: 'HTML Charset Unpack Routine Header',
+        pattern: `<script>\\(function\\(\\)\\{var C=.*?,P=.*?,W=\\d+,D=\\{\\}`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Detects the inlined unpacker function header initializing charset C and packed stream P.',
+        sampleMatch: '<script>(function(){var C="<!DOCTYPE...",P="!...#...",W=1,D={},n=0',
+      },
+      {
+        id: 'char-packer-indirect-eval',
+        name: 'Global Scope Indirect Eval Invocator',
+        pattern: `\\(0,eval\\)\\(o\\)\\}\\)\\(\\)`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Matches the global scope indirect eval execution pattern terminating the unpacker.',
+        sampleMatch: '(0,eval)(o)})()',
+      },
+    ],
+    siemDetections: [
+      {
+        platform: 'Sigma',
+        query: `title: In-Memory Indirect Eval Script Unpacker
+status: experimental
+description: Detects HTML documents executing scripts via indirect global eval
+logsource:
+  category: web_content
+detection:
+  selection:
+    Content|contains:
+      - '(0,eval)(o)'
+      - 'W='
+  condition: selection`,
+      },
+    ],
+    mitigationAdvice:
+      'Disable unsafe-eval in Content Security Policy (CSP). Implement static application security testing to detect unminified character harvest packing routines.',
+  },
+
+  'hidden-img-xor': {
+    profileId: 'hidden-img-xor',
+    profileLabel: 'Hidden Image XOR',
+    title: 'Camouflaged Image XOR Payload and Onload Injection Detection',
+    category: 'Defense Evasion / Steganography / Inline Loader',
+    severity: 'HIGH',
+    mitreTechnique: 'T1027.003',
+    mitreTactics: ['Defense Evasion', 'Execution'],
+    summary:
+      'Detects JavaScript payloads XOR-encrypted with a JPEG header key hidden inside an invisible image element and executed via a randomly placed onload attribute.',
+    yaraRule: {
+      ruleName: 'Exploit_Hidden_Img_XOR_Loader',
+      description: 'Identifies invisible images carrying base64 XOR payloads with onload attributes',
+      code: `rule Exploit_Hidden_Img_XOR_Loader
+{
+    meta:
+        author = "0xCONFUSED Cyber Operations"
+        description = "Detects hidden image XOR payloads and onload execution"
+        severity = "HIGH"
+        mitre_technique = "T1027.003"
+        date = "2026-10-14"
+        license = "AGPL-3.0-or-later"
+
+    strings:
+        $data_jpeg   = "data:image/jpeg;base64," ascii nocase
+        $onload_tok  = "onload=" ascii nocase
+        $text_dec    = "TextDecoder().decode" ascii
+        $func_exec   = "Function(new TextDecoder()" ascii
+
+    condition:
+        filesize < 25MB and
+        $data_jpeg and
+        $onload_tok and
+        ($text_dec or $func_exec)
+}`,
+    },
+    regexDetections: [
+      {
+        id: 'hidden-img-xor-loader',
+        name: 'Onload XOR Decoder and TextDecoder Function Routine',
+        pattern: `onload="setTimeout\\(\\(\\)=>\\{let a=Uint8Array\\.from\\(atob\\(`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Identifies the inline onload attribute executing atob extraction and TextDecoder instantiation.',
+        sampleMatch: 'onload="setTimeout(()=>{let a=Uint8Array.from(atob(img_a1b2.src.split(\',\')[1])',
+      },
+      {
+        id: 'hidden-img-hidden-css',
+        name: 'Stealth Image Attribute with Concealed Bounds',
+        pattern: `<img\\s+id="img_[a-f0-9]+"[^>]*style="[^"]*(?:clip-path:inset|position:absolute;left:-9999px|width:0;height:0)`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Matches concealed image DOM tags created to hide base64 payload carriers.',
+        sampleMatch: '<img id="img_e3f2" src="data:image/jpeg;base64,..." style="clip-path:inset(100%)">',
+      },
+    ],
+    siemDetections: [
+      {
+        platform: 'Sigma',
+        query: `title: Suspicious Inline Onload Atob Loader in HTML
+status: experimental
+description: Detects onload attributes executing inline atob base64 decoders
+logsource:
+  category: web_content
+detection:
+  selection:
+    Content|contains:
+      - 'data:image/jpeg;base64,'
+      - 'TextDecoder().decode'
+  condition: selection`,
+      },
+    ],
+    mitigationAdvice:
+      'Prohibit inline event handlers using Content Security Policy (disallow unsafe-inline). Sanitize DOM attributes to eliminate dynamic onload execution.',
+  },
+
+  'lsb-stego': {
+    profileId: 'lsb-stego',
+    profileLabel: 'Image LSB Steganography',
+    title: 'Least Significant Bit (LSB) Canvas Steganography Detection',
+    category: 'Defense Evasion / Image Steganography',
+    severity: 'MEDIUM',
+    mitreTechnique: 'T1027.003',
     mitreTactics: ['Defense Evasion'],
     summary:
-      'Detects HTML artifacts containing synthetic meta Content-Security-Policy directives with pre-computed sha256 inline nonces configured to allow restricted script execution.',
+      'Detects code concealed within the least significant bits of image pixel color channels, coupled with client-side HTML5 canvas getImageData extraction routines.',
     yaraRule: {
-      ruleName: 'Web_App_Hardened_CSP_Nonce_Injection',
-      description: 'Matches HTML documents bearing synthetic CSP meta tags calculating script-src sha256 hashes',
-      code: `rule Web_App_Hardened_CSP_Nonce_Injection
+      ruleName: 'Exploit_LSB_Canvas_Stego_Extractor',
+      description: 'Detects HTML5 canvas getImageData extraction loops reading image LSB bits',
+      code: `rule Exploit_LSB_Canvas_Stego_Extractor
 {
     meta:
         author = "0xCONFUSED Cyber Operations"
-        description = "Detects synthetic CSP meta policies with sha256 script hashing"
-        severity = "LOW"
-        mitre_technique = "T1562.001"
-        date = "2026-10-11"
+        description = "Detects canvas LSB pixel bit extraction onload scripts"
+        severity = "MEDIUM"
+        mitre_technique = "T1027.003"
+        date = "2026-10-14"
         license = "AGPL-3.0-or-later"
 
     strings:
-        $meta_csp   = "<meta http-equiv=\\"Content-Security-Policy\\"" nocase
-        $csp_src    = "script-src " nocase
-        $csp_sha256 = "'sha256-" ascii
-        $csp_strict = "'strict-dynamic'" nocase
-        $script_tag = "<script type=\\"text/javascript\\"" nocase
+        $canvas_ctx  = "getContext(\`2d\`)" ascii
+        $get_data    = "getImageData" ascii
+        $bit_shift   = "b=b*2+d[p+k]%2" ascii
+        $eval_unesc  = "eval(decodeURIComponent(escape(" ascii
 
     condition:
         filesize < 25MB and
-        $meta_csp and
-        $csp_src and
-        $csp_sha256 and
-        $script_tag
+        $canvas_ctx and
+        $get_data and
+        $bit_shift
 }`,
     },
     regexDetections: [
       {
-        id: 'hardener-csp-sha256-meta',
-        name: 'CSP Meta Tag with Inline SHA-256 Digest',
-        pattern: '<meta\\s+http-equiv=["\']Content-Security-Policy["\'][^>]+content=["\'][^"\']*script-src[^"\']*\'sha256-[A-Za-z0-9+/=]{44}\'',
-        flags: 'is',
-        flavor: 'PCRE',
-        description: 'Detects inlined Content Security Policy meta tags whitelisting specific script SHA-256 base64 digests.',
-        sampleMatch: '<meta http-equiv="Content-Security-Policy" content="script-src \'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\' \'strict-dynamic\';">',
-      },
-      {
-        id: 'hardener-assembler-comment',
-        name: 'Hardened Assembler Metadata Comment',
-        pattern: '<!--\\s*Hardened by Security Assembler\\s*-->',
-        flags: 'i',
-        flavor: 'Snort/Suricata',
-        description: 'Matches the assembler signature comment stamped by the security hardener engine.',
-        sampleMatch: '<!-- Hardened by Security Assembler -->',
-      },
-    ],
-    siemDetections: [
-      {
-        platform: 'Sigma',
-        query: `title: Suspicious Client-Side CSP Meta Tag Modification
-status: production
-logsource:
-    category: webserver
-detection:
-    selection:
-        response.body|contains:
-            - '<meta http-equiv="Content-Security-Policy"'
-            - 'script-src'
-            - "'sha256-"
-    condition: selection
-level: low`,
-      },
-    ],
-    mitigationAdvice:
-      'Serve Content-Security-Policy exclusively via HTTP response headers from verified edge proxies rather than client-controlled <meta> tags in HTML markup.',
-  },
-
-  sandbox: {
-    profileId: 'sandbox',
-    profileLabel: 'Interactive Test Harness',
-    title: 'Client-Side Telemetry Interception & Debugger Hooking Detection',
-    category: 'Telemetry Interception / Runtime Hooking',
-    severity: 'MEDIUM',
-    mitreTechnique: 'T1056.004',
-    mitreTactics: ['Collection', 'Discovery'],
-    summary:
-      'Detects code instrumentation that proxies window.console, captures browser events into in-memory queues, or executes debugging telemetry harnesses.',
-    yaraRule: {
-      ruleName: 'JS_Harness_Telemetry_Interceptor_Sandbox',
-      description: 'Detects client-side JavaScript hooking window.console and buffering telemetry output',
-      code: `rule JS_Harness_Telemetry_Interceptor_Sandbox
-{
-    meta:
-        author = "0xCONFUSED Cyber Operations"
-        description = "Detects runtime console interception and debugging telemetry queues"
-        severity = "MEDIUM"
-        mitre_technique = "T1056.004"
-        date = "2026-10-11"
-        license = "AGPL-3.0-or-later"
-
-    strings:
-        $hook_log   = "console.log = function" ascii
-        $hook_apply = "apply(console, arguments)" ascii
-        $telem_var  = "__drjekyll_telemetry" ascii
-        $telem_alt  = "__telemetry_events" ascii
-        $err_hook   = "window.addEventListener('error'" ascii
-
-    condition:
-        filesize < 15MB and
-        ($hook_log or $hook_apply) and
-        ($telem_var or $telem_alt or $err_hook)
-}`,
-    },
-    regexDetections: [
-      {
-        id: 'sandbox-console-interceptor',
-        name: 'Console Method Proxy Interceptor',
-        pattern: 'console\\.(?:log|warn|error|info)\\s*=\\s*(?:function|\\([^)]*\\)\\s*=>)[^{]*\\{[^}]*(?:__telemetry|__drjekyll|apply\\(console)',
-        flags: 'is',
-        flavor: 'PCRE',
-        description: 'Detects monkey-patching of native browser console output methods into telemetry collections.',
-        sampleMatch: 'console.log = function() { window.__drjekyll_telemetry.push(arguments); };',
-      },
-      {
-        id: 'sandbox-telemetry-queue',
-        name: 'Global Telemetry Queue Allocation',
-        pattern: 'window\\.(?:__drjekyll_telemetry|__harness_events)\\s*=\\s*\\[\\]',
-        flags: 'i',
+        id: 'lsb-stego-canvas-extractor',
+        name: 'Canvas LSB Bit Accumulation Loop',
+        pattern: `for\\(let p=0;p<d\\.length;p\\+=4\\)for\\(let k of \\[.*?\\]\\)\\{b=b\\*2\\+d\\[p\\+k\\]%2;`,
+        flags: 'gmi',
         flavor: 'ECMAScript',
-        description: 'Detects global array buffers created for script output interception.',
-        sampleMatch: 'window.__drjekyll_telemetry = [];',
-      },
-    ],
-    siemDetections: [
-      {
-        platform: 'Splunk',
-        query: `index=edr process_name IN ("chrome.exe", "msedge.exe", "firefox.exe")
-| search "window.__drjekyll_telemetry" OR "console.log = function"
-| stats count by host, user, process_name`,
-      },
-    ],
-    mitigationAdvice:
-      'Freeze native prototypes (Object.freeze(console)) early in execution context to prevent runtime API hooking or telemetry harvesting.',
-  },
-
-  injector: {
-    profileId: 'injector',
-    profileLabel: 'Dynamic Template & State Injector',
-    title: 'Template Token Delimiter Hydration Payload Detection',
-    category: 'Server-Side / Client-Side Template Injection',
-    severity: 'MEDIUM',
-    mitreTechnique: 'T1059.007',
-    mitreTactics: ['Initial Access', 'Execution'],
-    summary:
-      'Detects dynamic injection targeting template placeholders ({{APP_SCRIPT}}, <!-- MOUNT_SCRIPT -->) used to hydrate web pages with client payloads.',
-    yaraRule: {
-      ruleName: 'Web_Template_Token_State_Injector',
-      description: 'Detects unescaped template tags or dynamic state hydration script tags',
-      code: `rule Web_Template_Token_State_Injector
-{
-    meta:
-        author = "0xCONFUSED Cyber Operations"
-        description = "Detects template placeholders and state injection tags in HTML documents"
-        severity = "MEDIUM"
-        mitre_technique = "T1059.007"
-        date = "2026-10-11"
-        license = "AGPL-3.0-or-later"
-
-    strings:
-        $token1 = "{{APP_SCRIPT}}" ascii
-        $token2 = "<!-- MOUNT_SCRIPT -->" ascii
-        $token3 = "{{INJECTED_PAYLOAD}}" ascii
-        $state1 = "<script id=\\"injected-template-state\\"" nocase
-        $state2 = "data-injected-script" nocase
-
-    condition:
-        filesize < 25MB and (any of ($token*) or any of ($state*))
-}`,
-    },
-    regexDetections: [
-      {
-        id: 'injector-raw-tokens',
-        name: 'Template Placeholder Delimiter',
-        pattern: '\\{\\{(?:APP_SCRIPT|INJECTED_PAYLOAD|DYNAMIC_STATE|BOOTSTRAP_CODE)\\}\\}',
-        flags: 'i',
-        flavor: 'RE2',
-        description: 'Identifies unpopulated template delimiter tokens prone to injection replacement.',
-        sampleMatch: '<div>{{APP_SCRIPT}}</div>',
+        description: 'Matches the pixel buffer traversal extracting parity bits across color channels.',
+        sampleMatch: 'for(let p=0;p<d.length;p+=4)for(let k of [0,1,2]){b=b*2+d[p+k]%2;',
       },
       {
-        id: 'injector-comment-delimiters',
-        name: 'HTML Mount Comment Token',
-        pattern: '<!--\\s*(?:MOUNT_SCRIPT|INJECT_STATE|HYDRATE_APP)\\s*-->',
-        flags: 'i',
-        flavor: 'Snort/Suricata',
-        description: 'Matches HTML comment targets used as mount boundaries for injected scripts.',
-        sampleMatch: '<!-- MOUNT_SCRIPT -->',
+        id: 'lsb-stego-onload-attr',
+        name: 'Onload Natural Dimensions Canvas Extractor',
+        pattern: `onload="let t=this,c=document\\.createElement\\(\`canvas\`\\),x=c\\.getContext\\(\`2d\`\\)`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Identifies the inline onload attribute mounting the hidden extraction canvas.',
+        sampleMatch: 'onload="let t=this,c=document.createElement(`canvas`),x=c.getContext(`2d`)',
       },
     ],
     siemDetections: [
       {
         platform: 'Sigma',
-        query: `title: Dynamic Template Token Injection Pattern
-status: production
+        query: `title: Canvas Pixel Data Extraction via Inline Onload
+status: experimental
+description: Detects inline image onload attributes using 2D canvas pixel data extraction
 logsource:
-    category: webserver
+  category: web_content
 detection:
-    selection:
-        http.request.body|contains:
-            - '{{APP_SCRIPT}}'
-            - '<!-- MOUNT_SCRIPT -->'
-    condition: selection
-level: medium`,
+  selection:
+    Content|contains:
+      - 'getImageData'
+      - 'naturalWidth'
+      - 'eval(decodeURIComponent'
+  condition: selection`,
       },
     ],
     mitigationAdvice:
-      'Utilize context-aware contextual escaping parsers and strict template compilers rather than regex-based string replacements to avoid template injection.',
+      'Strip unnecessary image onload handlers. Disallow eval through CSP script-src directives.',
   },
 
-  canonical: {
-    profileId: 'canonical',
-    profileLabel: 'Canonical Core Runner',
-    title: 'Canonical Concatenation & End-of-Stream Payload Detection',
-    category: 'Stream Concatenation / Payload Stamping',
-    severity: 'LOW',
-    mitreTechnique: 'T1059.007',
-    mitreTactics: ['Execution'],
+  'zip-appender': {
+    profileId: 'zip-appender',
+    profileLabel: 'ZIP Trailing-Data Appender',
+    title: 'Image Polyglot Trailing ZIP Archive Detection',
+    category: 'Defense Evasion / Polyglot File Append',
+    severity: 'MEDIUM',
+    mitreTechnique: 'T1027.001',
+    mitreTactics: ['Defense Evasion', 'Execution'],
     summary:
-      'Detects standard canonical single-file compilation where standalone JavaScript is appended at end-of-stream with canonical headers.',
+      'Detects polyglot image files containing appended ZIP archives beyond image trailer markers (IEND/EOI), unpacked dynamically in-browser via JSZip CDN loaders.',
     yaraRule: {
-      ruleName: 'HTML_JS_Canonical_Core_Artifact',
-      description: 'Matches canonical stream-appended JavaScript code blocks in HTML artifacts',
-      code: `rule HTML_JS_Canonical_Core_Artifact
+      ruleName: 'Exploit_Image_Trailing_ZIP_Polyglot',
+      description: 'Detects base64 image data containing appended PK zip headers and JSZip unpackers',
+      code: `rule Exploit_Image_Trailing_ZIP_Polyglot
 {
     meta:
         author = "0xCONFUSED Cyber Operations"
-        description = "Detects canonical single-file HTML-JS composite payloads"
-        severity = "LOW"
-        mitre_technique = "T1059.007"
-        date = "2026-10-11"
+        description = "Detects image files with appended ZIP payloads loaded via JSZip"
+        severity = "MEDIUM"
+        mitre_technique = "T1027.001"
+        date = "2026-10-14"
         license = "AGPL-3.0-or-later"
 
     strings:
-        $doctype = "<!DOCTYPE html>" nocase
-        $closing = "</html>" nocase
-        $sig1    = "<!-- CANONICAL_BUNDLE" ascii
-        $sig2    = "data-compiler=\\"jekyll\\"" ascii
-        $script  = "<script type=\\"text/javascript\\">" nocase
+        $jszip_cdn   = "jszip.min.js" ascii nocase
+        $iend_tag    = "IEND" ascii
+        $load_async  = "JSZip.loadAsync" ascii
 
     condition:
         filesize < 25MB and
-        $doctype and
-        $closing and
-        $script and
-        (any of ($sig*))
+        $jszip_cdn and
+        $load_async
 }`,
     },
     regexDetections: [
       {
-        id: 'canonical-signature-stamp',
-        name: 'Canonical Compiler Signature Stamp',
-        pattern: '<!--\\s*CANONICAL_BUNDLE_[A-Z0-9_]+\\s*-->',
-        flags: 'i',
-        flavor: 'Snort/Suricata',
-        description: 'Detects the unique canonical signature block stamped onto compiled output bundles.',
-        sampleMatch: '<!-- CANONICAL_BUNDLE_V1 -->',
+        id: 'zip-appender-jszip-script',
+        name: 'JSZip CDN Script Tag Loader',
+        pattern: `<script src="https:\\/\\/cdnjs\\.cloudflare\\.com\\/ajax\\/libs\\/jszip\\/[\\d\\.]+\\/jszip\\.min\\.js" onload=`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Matches the external script injection referencing JSZip with an unpacking onload callback.',
+        sampleMatch: '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" onload=\'(async()=>{',
       },
       {
-        id: 'canonical-tail-injection',
-        name: 'Tail Script Stream Concatenation',
-        pattern: '<script\\s+type=["\']text/javascript["\']>[^<]{150,}</script>\\s*</html>',
-        flags: 'is',
-        flavor: 'PCRE',
-        description: 'Matches raw JavaScript payload blocks appended immediately prior to the closing html tag.',
-        sampleMatch: '<script type="text/javascript">\nvar core = 1;\n</script>\n</html>',
+        id: 'zip-appender-finder-routine',
+        name: 'Image Trailer Marker Finder Routine',
+        pattern: `function F\\(b\\)\\{.*?if\\(t=="IEND"\\)return o;`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Detects the byte scanner locating the boundary where image data ends and the ZIP archive begins.',
+        sampleMatch: 'function F(b){const v=new DataView(b.buffer);let o=8;while(o+8<=b.length){...if(t=="IEND")return o;}return -1;}',
       },
     ],
     siemDetections: [
       {
         platform: 'Sigma',
-        query: `title: Canonical Composite HTML-JS Payload Detection
-status: production
+        query: `title: Suspicious JSZip Polyglot Unpacker in Web Artifact
+status: experimental
+description: Detects HTML documents loading JSZip to unpack trailing image ZIP archives
 logsource:
-    category: webserver
+  category: web_content
 detection:
-    selection:
-        http.response.body|contains:
-            - '<!-- CANONICAL_BUNDLE'
-            - '<script type="text/javascript">'
-    condition: selection
-level: low`,
+  selection:
+    Content|contains:
+      - 'jszip.min.js'
+      - 'JSZip.loadAsync'
+  condition: selection`,
       },
     ],
     mitigationAdvice:
-      'Separate static presentation markup from dynamic code execution; serve scripts through secure authenticated CDNs with SRI hashing.',
+      'Restrict external CDN script loading via CSP script-src directives. Validate that uploaded or served image files do not contain trailing bytes beyond standard container format trailers.',
   },
 };

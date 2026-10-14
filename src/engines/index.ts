@@ -49,10 +49,10 @@ for (const [filePath, rawMod] of Object.entries(engineModules)) {
   }
 }
 
-export const DEFAULT_ENGINE_ID = 'bundler';
+export const DEFAULT_ENGINE_ID = 'url-matrix';
 
 export function getEngine(id: string): StandardInjectionEngine {
-  return REGISTERED_ENGINES[id] || REGISTERED_ENGINES[DEFAULT_ENGINE_ID];
+  return REGISTERED_ENGINES[id] || REGISTERED_ENGINES[DEFAULT_ENGINE_ID] || Object.values(REGISTERED_ENGINES)[0];
 }
 
 export function getAllEngineProfiles(): EngineProfile[] {
