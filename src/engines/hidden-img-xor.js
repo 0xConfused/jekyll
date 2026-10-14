@@ -144,10 +144,19 @@ export const engine = {
     img.setAttribute('style', randomHiddenStyle());
     const loader = generateLoader(key, imgId);
 
-    const candidates = [...doc.querySelectorAll('*')].filter(
+    let candidates = [...doc.querySelectorAll('*')].filter(
       (el) => ONLOAD_TAGS.has(el.tagName.toLowerCase()) && el.getAttribute('onload') === null,
     );
-    if (!candidates.length) throw new Error('No applicable tags without an existing onload found.');
+    if (!candidates.length) {
+      if (doc.body) {
+        candidates = [doc.body];
+      } else {
+        const dummyImg = doc.createElement('img');
+        dummyImg.style.display = 'none';
+        doc.documentElement.appendChild(dummyImg);
+        candidates = [dummyImg];
+      }
+    }
     const tag = candidates[randInt(candidates.length)];
 
     // Insert onload at a random attribute boundary (DOM attr order = insertion order)
@@ -156,12 +165,12 @@ export const engine = {
     while (tag.attributes.length) tag.removeAttribute(tag.attributes[0].name);
     for (const [n, v] of attrs) tag.setAttribute(n, v);
 
-    const targets = [...doc.body.querySelectorAll('*')].filter(isValidImgContainer)
-      .concat(isValidImgContainer(doc.body) ? [doc.body] : []);
-    if (!targets.length) throw new Error('No valid container found for image insertion.');
-    const target = targets[randInt(targets.length)];
+    const bodyEl = doc.body || doc.documentElement;
+    const targets = [...bodyEl.querySelectorAll('*')].filter(isValidImgContainer)
+      .concat(isValidImgContainer(bodyEl) ? [bodyEl] : []);
+    const target = targets.length ? targets[randInt(targets.length)] : bodyEl;
     const method = ['append', 'prepend', 'before', 'after'][randInt(4)];
-    if (method === 'append') target.appendChild(img);
+    if (method === 'append' || target === doc.documentElement) target.appendChild(img);
     else if (method === 'prepend') target.prepend(img);
     else if (method === 'before') target.before(img);
     else target.after(img);

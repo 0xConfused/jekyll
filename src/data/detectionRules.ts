@@ -413,4 +413,79 @@ detection:
     mitigationAdvice:
       'Restrict external CDN script loading via CSP script-src directives. Validate that uploaded or served image files do not contain trailing bytes beyond standard container format trailers.',
   },
+
+  codecamo: {
+    profileId: 'codecamo',
+    profileLabel: 'Property Camouflage',
+    title: 'Object Property Camouflage & String Decomposition Detection',
+    category: 'Defense Evasion / Property Camouflage',
+    severity: 'HIGH',
+    mitreTechnique: 'T1027',
+    mitreTactics: ['Defense Evasion'],
+    summary:
+      'Detects JavaScript payloads obfuscated via runtime string splitting, dynamic dot expression extraction from browser globals, and semantic property access camouflage (Proxy, with, IIFE, Symbol).',
+    yaraRule: {
+      ruleName: 'Exploit_Property_Camouflage_Obfuscator',
+      description: 'Identifies scripts using dynamic Proxy property access rewrites and runtime dot expression extraction',
+      code: `rule Exploit_Property_Camouflage_Obfuscator
+{
+    meta:
+        author = "0xCONFUSED Cyber Operations"
+        description = "Detects Property Camouflage proxy and dot expression rewrites"
+        severity = "HIGH"
+        mitre_technique = "T1027"
+        date = "2026-10-14"
+        license = "AGPL-3.0-or-later"
+
+    strings:
+        $proxy_rewrite = "new Proxy(" ascii
+        $reflect_get   = "Reflect.get(" ascii
+        $dot_search    = ".search(/\\\\x2E/)" ascii
+        $with_stmt     = "with(" ascii
+
+    condition:
+        filesize < 25MB and
+        ($proxy_rewrite and $reflect_get) or
+        ($dot_search and $with_stmt)
+}`,
+    },
+    regexDetections: [
+      {
+        id: 'camo-proxy-property-accessor',
+        name: 'Camouflaged Proxy Property Accessor',
+        pattern: `new\\s+Proxy\\([^,]+,\\{get:\\([^)]+\\)=>[^=]+==='[^']+'\\?[^:]+:Reflect\\.get\\([^)]+\\)\\}`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Matches inline Proxy accessors synthesized to obfuscate standard property access.',
+        sampleMatch: "new Proxy(window,{get:(b,c)=>c==='location'?b[c]:Reflect.get(b,c)})",
+      },
+      {
+        id: 'camo-runtime-dot-extract',
+        name: 'Runtime Browser Global Dot Expression Extractor',
+        pattern: `(?:navigator|location|document|window)\\[(?:navigator|location|document|window)\\.search\\(\\/\\\\x2[eE]\\/\\)\\]`,
+        flags: 'gmi',
+        flavor: 'ECMAScript',
+        description: 'Detects dynamic dot character extraction from browser globals.',
+        sampleMatch: "navigator[navigator.search(/\\x2E/)]",
+      },
+    ],
+    siemDetections: [
+      {
+        platform: 'Sigma',
+        query: `title: Suspicious Proxy-Based Property Obfuscation in Web Artifact
+status: experimental
+description: Detects HTML documents containing synthetic Proxy or with-block property accessors
+logsource:
+  category: web_content
+detection:
+  selection:
+    Content|contains:
+      - 'Reflect.get('
+      - '.search(/\\\\x2E/)'
+  condition: selection`,
+      },
+    ],
+    mitigationAdvice:
+      'Audit scripts for suspicious dynamic Proxy interceptors and with-statement constructs. Enforce code review on incoming web resources.',
+  },
 };
