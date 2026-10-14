@@ -13,10 +13,13 @@
  *            prevent primitive Proxy crashes, and eliminate scope identifier collisions.
  *   Pass 3 — Smart Decoy Comments:
  *            Inserts plausible comments exclusively at verified statement termination
- *            boundaries (; or }) with strict HTML entity sanitization to prevent </script> leaks.
+ *            boundaries (; or }) with strict HTML sanitization to prevent </script>
+ *            and script-data-escaped ("<!--") leaks.
  *   Pass 4 — Self-Healing Dry Run:
- *            Verifies candidate output syntax before emission. If any variation creates
- *            unviable code, the engine heals automatically to guaranteed-safe transformations.
+ *            Verifies candidate output syntax (sanitize INCLUDED) before emission.
+ *            If any variation creates unviable code, the engine heals automatically
+ *            to guaranteed-safe transformations; if healing also fails, nothing is
+ *            emitted.
  */
 
 import { randInt, secureChoice, stripOriginalJs, injectBeforeClose, log } from '../lib/engine-utils.js';
@@ -157,7 +160,7 @@ const inMask = (masks, start, end) =>
 // ------------------------------------------------------------ dot generator
 /**
  * Generates runtime dot expressions guaranteed to evaluate to "." in every context.
- * Uses safe arithmetic, string slicing, and charCode conversions.
+ * Pure arithmetic / charCode forms — no volatile browser APIs, no sandbox failures.
  * @returns {string}
  */
 function generateSmartDotExpr() {
@@ -170,10 +173,19 @@ function generateSmartDotExpr() {
   ]);
 }
 
+// Lookahead-only "word-dot-word" finder (no lookbehind: Safari < 16.4 safe).
+// Returns dot indices within `s` where a word char precedes and follows the dot.
+function findWordDots(s) {
+  const dots = [];
+  for (let m, re = /\.(?=[A-Za-z0-9_])/g; (m = re.exec(s)); )
+    if (m.index > 0 && /[A-Za-z0-9_]/.test(s[m.index - 1])) dots.push(m.index);
+  return dots;
+}
+
 // -------------------------------------------------- pass 1: split strings
 /**
- * Splits string literals containing word.dot.word fragments behind smart dot expressions.
- * Uses zero-width lookaround assertions so consecutive segments (a.b.c) split completely.
+ * Splits string literals containing word.dot.word fragments behind smart dot
+ * expressions. Consecutive segments (a.b.c) split completely.
  * @param {string} code
  * @returns {{code: string, count: number}}
  */
@@ -190,15 +202,14 @@ function splitDottedStrings(code) {
       continue;
     }
     const content = code.slice(span.start + 1, span.end - 1);
-    const parts = [];
-    let last = 0;
-    const re = /(?<=\w)\.(?=\w)/g;
-    for (let m; (m = re.exec(content)); ) {
-      const dotIdx = m.index;
-      parts.push(content.slice(last, dotIdx));
-      last = dotIdx + 1;
-    }
-    if (parts.length) {
+    const dotIdxs = findWordDots(content);
+    if (dotIdxs.length) {
+      const parts = [];
+      let last = 0;
+      for (const d of dotIdxs) {
+        parts.push(content.slice(last, d));
+        last = d + 1;
+      }
       parts.push(content.slice(last));
       count++;
       const dot = generateSmartDotExpr();
@@ -222,8 +233,6 @@ const SENSITIVE_PROPS = new Set([
 
 /**
  * Smart property transformation preserving syntactic and execution viability.
- * Uses hex-escaped bracket properties, character code arrays, and computed sub-strings
- * to guarantee that 'this' execution context and lvalue assignments are always preserved.
  * @param {string} obj
  * @param {string} prop
  * @param {boolean} isLhs
@@ -303,6 +312,16 @@ function transformProperties(code, masks, identifiers) {
   return { code: out, count };
 }
 
+/** Conservative bracket-only property transform (self-healing fallback). */
+function bracketSafeTransform(code) {
+  const { masks } = scanJs(code); // FIXED: one scan, not per-match
+  return code.replace(PROP_RE, (m, prop, offset) => {
+    if (inMask(masks, offset, offset + m.length)) return m;
+    const obj = m.slice(0, m.length - prop.length - 1);
+    return `${obj}["${prop}"]`;
+  });
+}
+
 // ------------------------------------------------- pass 3: decoy comments
 const SAFE_COMMENT_ACTIONS = ['Version', 'Change', 'Update', 'Fix', 'Added', 'Removed', 'Refactored', 'Enhancement'];
 const SAFE_COMMENT_DESCRIPTIONS = [
@@ -337,7 +356,6 @@ function injectSmartDecoyComments(code, maxComments) {
 
   for (let i = 0; i < code.length - 1; i++) {
     const ch = code[i];
-    // Only insert after a semicolon or closing brace followed by a newline
     if ((ch === ';' || ch === '}') && code[i + 1] === '\n') {
       const nextLineStart = i + 2;
       if (!inMask(masks, nextLineStart, nextLineStart + 1)) {
@@ -371,28 +389,64 @@ function injectSmartDecoyComments(code, maxComments) {
  */
 function verifyNoDottedStrings(code) {
   const remaining = scanJs(code).strings.filter(
-    (s) => /(?<=\w)\.(?=\w)/.test(code.slice(s.start + 1, s.end - 1)),
+    (s) => findWordDots(code.slice(s.start + 1, s.end - 1)).length > 0,
   );
   return { ok: remaining.length === 0, remaining: remaining.length };
 }
 
 /**
- * Sanitizes script content to prevent accidental premature script tag termination in HTML.
+ * Sanitizes script content so the HTML parser cannot terminate the enclosing
+ * <script> element early, in either of the two ways it can happen:
+ *   1. a raw "</script" sequence  -> identity-escaped as "<\/script"
+ *   2. a raw "<!--" sequence      -> unicode-escaped as "<\u0021--"
+ *      (switches the parser into script-data-escaped state, after which a
+ *      later real "</script>" may be swallowed)
+ * Escapes are identity-equivalent inside strings/comments; a rare corruption
+ * case in code position is caught by the post-sanitize dry-run gate below.
  * @param {string} script
  * @returns {string}
  */
 function sanitizeScriptForHtml(script) {
-  return script.replace(/<\/script/gi, '<\\/script');
+  return script
+    .replace(/<\/script/gi, '<\\/script')
+    .replace(/<!--/g, '<\\u0021--');
+}
+
+/** Byte-level proof on the exact emitted script: no early-termination bytes. */
+function assertInlineSafe(script) {
+  if (/<\/script(?=[\s/>])/i.test(script))
+    throw new Error('CODE-CAMO — "</script" survived sanitation; output not emitted.');
+  if (/<!--/.test(script))
+    throw new Error('CODE-CAMO — "<!--" survived sanitation; output not emitted.');
+}
+
+/**
+ * Parse-only dry run. Module payloads (top-level import/export) are not
+ * Function-body parseable, so they are detected and exempted — a valid
+ * module would otherwise always trigger the self-healing path.
+ * @param {string} js
+ * @returns {boolean}
+ */
+function parsesCleanly(js) {
+  if (/\bimport\s|\bexport\s/.test(js)) return true; // module payload: skip Function gate
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(js);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ------------------------------------------------------------------- engine
 export const engine = {
-  id: 'codecamo',
+  id: 'code-camo',
   label: 'Property Camouflage',
   description:
     'Smart-random obfuscation: splits dotted strings behind tamper-proof runtime dot ' +
     'expressions, applies type-safe property access camouflage preserving lvalues and ' +
-    'method contexts, and inserts verified statement-boundary decoy comments.',
+    'method contexts, inserts verified statement-boundary decoy comments, and ' +
+    'self-heals to safe transformations if any candidate output fails a parse dry-run.',
 
   execute({ html, js }) {
     if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
@@ -405,7 +459,7 @@ export const engine = {
     const p1 = splitDottedStrings(js);
     stats.push(`strings split ............... ${p1.count}`);
 
-    // Pass 2: Smart property camouflage with AST/syntax awareness
+    // Pass 2: Smart property camouflage with syntax awareness
     const { masks, identifiers } = scanJs(p1.code);
     const p2 = transformProperties(p1.code, masks, identifiers);
     stats.push(`properties transformed ..... ${p2.count}`);
@@ -414,43 +468,37 @@ export const engine = {
     const p3 = injectSmartDecoyComments(p2.code, 2 + randInt(3));
     stats.push(`decoy comments inserted .... ${p3.count}`);
 
-    let finalJs = p3.code;
+    // Sanitize FIRST so the dry-run gate below also covers sanitize corruption.
+    let finalJs = sanitizeScriptForHtml(p3.code);
 
-    // Self-Healing Dry-Run: Test syntax with new Function
-    let syntaxValid = false;
-    try {
-      new Function(finalJs);
-      syntaxValid = true;
-    } catch {
-      // Automatic self-healing fallback: conservative safe property transformation
-      const fallbackP1 = splitDottedStrings(js);
-      const safeJs = fallbackP1.code.replace(PROP_RE, (m, prop, offset) => {
-        const { masks: fMasks } = scanJs(fallbackP1.code);
-        if (inMask(fMasks, offset, offset + m.length)) return m;
-        const obj = m.slice(0, m.length - prop.length - 1);
-        return `${obj}["${prop}"]`;
-      });
-      finalJs = safeJs;
+    // Self-Healing Dry-Run: if the smart passes (or the sanitizer) broke
+    // syntax, fall back to conservative, provably-equivalent transformations.
+    if (!parsesCleanly(finalJs)) {
+      const healed = bracketSafeTransform(splitDottedStrings(js).code);
+      finalJs = sanitizeScriptForHtml(healed);
+      if (!parsesCleanly(finalJs))
+        throw new Error('CODE-CAMO — self-healing failed: even the conservative fallback does not parse; nothing emitted.');
       stats.push('self-healing ................ applied safe syntax fallback');
-    }
-
-    if (syntaxValid) {
+    } else {
       stats.push('syntax verification ........ PASSED');
     }
 
-    const check = verifyNoDottedStrings(finalJs);
-    if (!check.ok) {
-      // Re-split any residual dotted strings
+    // Dotted-string round-trip: re-split residuals, then ASSERT (never report
+    // success unconditionally).
+    if (!verifyNoDottedStrings(finalJs).ok)
       finalJs = splitDottedStrings(finalJs).code;
-    }
+    const check = verifyNoDottedStrings(finalJs);
+    if (!check.ok)
+      throw new Error(`CODE-CAMO BUG — ${check.remaining} string literal(s) still contain ` +
+        'word.dot.word fragments; output not emitted.');
     stats.push('round-trip verified ....... no dotted fragments left in strings');
 
-    // Ensure HTML viability: sanitize any </script occurrences inside the script
-    const safeScript = sanitizeScriptForHtml(finalJs);
+    // Final gates on the exact bytes to be emitted inside <script>...</script>.
+    assertInlineSafe(finalJs);
 
-    // Strip inline original JS and inject safe camouflaged script
+    // Strip inline original JS and inject the camouflaged script
     const stripped = stripOriginalJs(html, js);
-    const result = injectBeforeClose(stripped, `<script>\n${safeScript}\n</script>`);
+    const result = injectBeforeClose(stripped, `<script>\n${finalJs}\n</script>`);
 
     return {
       html: result,
