@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import React from 'react';
-import { Play, Layers } from 'lucide-react';
+import React, { useState } from 'react';
+import { Play, Layers, ChevronDown } from 'lucide-react';
 import { EngineProfile } from '../types';
 import { InjectionSpinner } from './InjectionSpinner';
 
@@ -24,13 +24,11 @@ export const ScriptSelectorBar: React.FC<ScriptSelectorBarProps> = ({
   onExecute,
   onViewDetections,
 }) => {
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState<boolean>(false);
   const currentProfile = profiles.find((p) => p.id === selectedProfileId);
 
   return (
     <div className="w-full bg-[#141414] border border-[#383838] p-3 sm:p-4 mb-4">
-      {/* Top accent hairline */}
-      <div className="h-[2px] w-full bg-gradient-to-r from-[#c30800] via-[#c300bb] to-[#bbc300] -mt-3 sm:-mt-4 -mx-3 sm:-mx-4 mb-3 sm:mb-4 w-[calc(100%+1.5rem)] sm:w-[calc(100%+2rem)]" />
-
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 items-start">
         {/* Compilation Profile Selector */}
         <div className="lg:col-span-8 flex flex-col">
@@ -41,7 +39,9 @@ export const ScriptSelectorBar: React.FC<ScriptSelectorBarProps> = ({
 
           <select
             value={selectedProfileId}
-            onChange={(e) => onSelectProfile(e.target.value)}
+            onChange={(e) => {
+              onSelectProfile(e.target.value);
+            }}
             className="w-full h-10 bg-[#1a1a1a] text-[#f0f0f0] border border-[#383838] px-3 text-xs sm:text-sm font-mono focus:border-[#c30800] focus:outline-none transition-colors"
           >
             {profiles.map((profile) => (
@@ -52,19 +52,47 @@ export const ScriptSelectorBar: React.FC<ScriptSelectorBarProps> = ({
           </select>
 
           {currentProfile && (
-            <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5">
-              <p className="text-[11px] font-sans text-[#8c8c8c] line-clamp-1 flex-1 min-w-[200px]" title={currentProfile.description}>
-                {currentProfile.description}
-              </p>
-              {onViewDetections && (
-                <button
-                  type="button"
-                  onClick={() => onViewDetections(selectedProfileId)}
-                  className="text-[10px] font-mono text-[#c30800] hover:text-[#f60a00] underline decoration-[#c30800]/40 hover:decoration-[#f60a00] underline-offset-4 cursor-pointer shrink-0"
+            <div className="mt-2 flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setIsDescriptionExpanded((prev) => !prev);
+                    }
+                  }}
+                  className="flex items-start gap-1.5 text-left flex-1 min-w-[200px] cursor-pointer group py-0.5 select-none focus:outline-none"
+                  title={isDescriptionExpanded ? 'Click to collapse description' : 'Click to expand full description'}
                 >
-                  [ VIEW YARA &amp; REGEX DETECTIONS ]
-                </button>
-              )}
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-[#c30800] shrink-0 mt-0.5 transition-transform duration-200 ${
+                      isDescriptionExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                  <p
+                    className={`text-[11px] font-sans transition-colors leading-relaxed ${
+                      isDescriptionExpanded
+                        ? 'text-[#f0f0f0]'
+                        : 'line-clamp-1 text-[#8c8c8c] group-hover:text-[#f0f0f0]'
+                    }`}
+                  >
+                    {currentProfile.description}
+                  </p>
+                </div>
+
+                {onViewDetections && (
+                  <button
+                    type="button"
+                    onClick={() => onViewDetections(selectedProfileId)}
+                    className="text-[10px] font-mono text-[#c30800] hover:text-[#f60a00] underline decoration-[#c30800]/40 hover:decoration-[#f60a00] underline-offset-4 cursor-pointer shrink-0"
+                  >
+                    [ VIEW YARA &amp; REGEX DETECTIONS ]
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

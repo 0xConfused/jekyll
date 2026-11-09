@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { ShieldAlert, CheckCircle2 } from 'lucide-react';
-import { SkullLogo } from './SkullLogo';
 
 const BRAND_NAME = '0xCONFUSED';
 const SCRAMBLE_CHARS = '!@#$%^&*<>[]_01';
@@ -69,11 +68,19 @@ export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
         aria-labelledby="ownership-warning-title"
       >
         <div className="h-[2px] w-full bg-gradient-to-r from-[#c30800] via-[#c300bb] to-[#bbc300]" />
-        {/* Status Header */}
-        <div className="bg-[#141414] backdrop-blur-sm bg-gradient-to-r from-[#c30800]/10 via-transparent to-transparent px-5 py-3.5 border-b border-[#383838] flex items-center">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center justify-center shrink-0">
-              <SkullLogo size={36} className="w-9 h-9 object-contain" />
+        {/* Status Header Banner */}
+        <div className="bg-[#141414] backdrop-blur-sm bg-gradient-to-r from-[#c30800]/10 via-transparent to-transparent px-5 h-16 border-b border-[#383838] flex items-center">
+          <div className="flex items-center gap-3 min-w-0 h-full">
+            <div className="brand-logo-slot">
+              <div className="brand-logo-inner" aria-hidden="true">
+                <img
+                  src="/skull-logo.png"
+                  alt="0xCONFUSED Logo"
+                  width={64}
+                  height={64}
+                  className="w-16 h-16 object-contain"
+                />
+              </div>
             </div>
             <div className="brand-title-row">
               <span

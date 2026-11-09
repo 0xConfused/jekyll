@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { SkullLogo } from './SkullLogo';
 
 interface HeaderProps {
   isExecuting: boolean;
@@ -75,24 +74,39 @@ export const Header: React.FC<HeaderProps> = ({
     <header id="drjekyll-header" className="topbar">
       <div className="topbar-inner">
         <div className="brand">
+          {/* Logo with Masked Scanlines */}
           <div className="brand-logo-slot">
-            <div className="brand-logo-inner" aria-hidden="true">
-              <SkullLogo
-                size={64}
-                className="w-16 h-16 object-contain opacity-100"
-              />
-            </div>
+            <a
+              href="https://www.0xconfused.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full h-full"
+            >
+              <div className="brand-logo-inner" aria-hidden="true">
+                <img
+                  src="/skull-logo.png"
+                  alt="0xCONFUSED Logo"
+                  width={64}
+                  height={64}
+                  className="w-16 h-16 object-contain"
+                />
+              </div>
+            </a>
           </div>
 
+          {/* Title with Masked Scanlines across Letters and Glow */}
           <div className="brand-text-wrap">
             <div className="brand-title-row">
-              <h1
-                className="brand-glitch-text font-glitch"
-                id="brandGlitchText"
-                data-text="0xCONFUSED"
-                onMouseEnter={handleMouseEnter}
-              >
-                <span className="brand-title">{scrambleText}</span>
+              <h1 className="brand-glitch-text font-glitch" id="brandGlitchText">
+                <a
+                  href="https://www.0xconfused.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="no-underline text-inherit inline-flex items-baseline"
+                  onMouseEnter={handleMouseEnter}
+                >
+                  <span className="brand-title">{scrambleText}</span>
+                </a>
               </h1>
               <span className="brand-mod font-mono">./jekyll</span>
             </div>
@@ -155,7 +169,7 @@ export const Header: React.FC<HeaderProps> = ({
                     : 'bg-[#383838]'
                 }`}
               />
-              {isExecuting ? 'RUNNING' : 'READY'}
+              {isExecuting ? 'RUNNING' : isReady ? 'READY' : 'STANDBY'}
             </span>
           </div>
 

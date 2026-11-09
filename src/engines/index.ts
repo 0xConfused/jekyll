@@ -25,7 +25,7 @@ const engineModules = import.meta.glob<EngineModule>(
   { eager: true }
 );
 
-export const REGISTERED_ENGINES: Record<string, StandardInjectionEngine> = {};
+const discovered: StandardInjectionEngine[] = [];
 
 for (const [filePath, rawMod] of Object.entries(engineModules)) {
   const mod = rawMod as EngineModule;
@@ -45,18 +45,40 @@ for (const [filePath, rawMod] of Object.entries(engineModules)) {
   )) as StandardInjectionEngine | undefined;
 
   if (candidate && candidate.id && typeof candidate.execute === 'function') {
-    REGISTERED_ENGINES[candidate.id] = candidate;
+    discovered.push(candidate);
   }
 }
 
-export const DEFAULT_ENGINE_ID = 'url-matrix';
+// Sort discovered engines strictly in alphabetical order by their display label
+discovered.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+
+export const REGISTERED_ENGINES: Record<string, StandardInjectionEngine> = {};
+for (const eng of discovered) {
+  REGISTERED_ENGINES[eng.id] = eng;
+}
+
+// Legacy engine ID mapping for backward compatibility
+const LEGACY_ENGINE_MAP: Record<string, string> = {
+  'element-hook': 'dom-method-hook',
+  'code-camo': 'property-access-obfuscator',
+  'codecamo': 'property-access-obfuscator',
+  'hidden-img-xor': 'image-onerror-xor',
+  'html-char-packer': 'dom-charset-packer',
+  'lsb-stego': 'canvas-lsb-steganography',
+  'url-matrix': 'url-coordinate-matrix',
+  'zip-appender': 'image-zip-polyglot',
+};
+
+// First engine in alphabetical order is the default
+export const DEFAULT_ENGINE_ID = discovered[0]?.id || 'dom-method-hook';
 
 export function getEngine(id: string): StandardInjectionEngine {
-  return REGISTERED_ENGINES[id] || REGISTERED_ENGINES[DEFAULT_ENGINE_ID] || Object.values(REGISTERED_ENGINES)[0];
+  const resolvedId = LEGACY_ENGINE_MAP[id] || id;
+  return REGISTERED_ENGINES[resolvedId] || REGISTERED_ENGINES[DEFAULT_ENGINE_ID] || Object.values(REGISTERED_ENGINES)[0];
 }
 
 export function getAllEngineProfiles(): EngineProfile[] {
-  return Object.values(REGISTERED_ENGINES).map((eng) => ({
+  return discovered.map((eng) => ({
     id: eng.id,
     label: eng.label,
     description: eng.description,

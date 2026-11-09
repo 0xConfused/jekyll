@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * url-matrix.js — URL string matrix encoder. Every character of the JS payload
+ * url-coordinate-matrix.js — URL coordinate matrix encoder. Every character of the JS payload
  * is remapped onto literal Node.js documentation URL strings; characters not
  * found (uppercase, emoji, ...) are rebuilt via hex codepoint instructions.
  * Round-trip verified before output. The obfuscated result is injected into
@@ -102,15 +102,15 @@ function renderTemplate(year, urlsJson, payloadB64) {
  * origin; unauthorized extraction or reuse is misappropriation. Provided "AS
  * IS" without warranty of any kind. Governing law: State of Delaware, USA.
  */
-const _d=${urlsJson},_b="${payloadB64}";let _f;try{_f=atob(_b)}catch(e){_f=Buffer.from(_b,"base64").toString("binary")};(function(){try{let _p='',i=0;while(i<_f.length){const t=_f.charCodeAt(i++);if(t===0){_p+=_d[_f.charCodeAt(i++)][_f.charCodeAt(i++)]}else{const n=_f.charCodeAt(i++);let _h='';for(let k=0;k<n;k++){const u=_f.charCodeAt(i++);_h+=u===255?(!1+"")[0]:_d[u][_f.charCodeAt(i++)]}_p+=String.fromCodePoint(parseInt(_h,16))}}new Function(_p)();}catch(e){console.error("Matrix corrupted.",e)}}());`;
+const _d=${urlsJson},_b="${payloadB64}";let _f;try{_f=atob(_b)}catch{_f=Buffer.from(_b,"base64").toString("binary")};(function(){try{let _p='',i=0;while(i<_f.length){const t=_f.charCodeAt(i++);if(t===0){_p+=_d[_f.charCodeAt(i++)][_f.charCodeAt(i++)]}else{const n=_f.charCodeAt(i++);let _h='';for(let k=0;k<n;k++){const u=_f.charCodeAt(i++);_h+=u===255?(!1+"")[0]:_d[u][_f.charCodeAt(i++)]}_p+=String.fromCodePoint(parseInt(_h,16))}}new Function(_p)();}catch{}}());`;
 }
 
 export const engine = {
-  id: 'url-matrix',
-  label: 'URL String Matrix',
+  id: 'url-coordinate-matrix',
+  label: 'URL Coordinate Matrix',
   description:
-    'Obfuscates the JS payload by mapping every character onto literal Node.js doc ' +
-    'URL strings (hex fallback for missing chars), round-trip verified, then injected.',
+    'This engine maps each JavaScript character to coordinates in standard URL strings. ' +
+    'It reconstructs and runs the code during page load.',
 
   execute({ html, js }) {
     // Byte-accurate invariant: url_idx and char_idx must each fit in one byte
@@ -140,12 +140,30 @@ export const engine = {
 
     const outJs = renderTemplate(new Date().getFullYear(), JSON.stringify(URLS), payloadB64);
     const stripped = stripOriginalJs(html, js);
-    const result = injectBeforeClose(stripped, `<script>\n${outJs}\n</script>`);
+    const result = injectBeforeClose(stripped, `<script>\n${outJs}\n</script>`, {
+      variation: true,
+      allowHead: true,
+      allowBodyStart: true,
+      allowBodyMid: true,
+    });
+
+    const directHits = instructions.filter((ins) => ins[0] === 0).length;
+    const hexFallbacks = instructions.filter((ins) => ins[0] === 1).length;
+    const totalUrlSpace = URLS.reduce((acc, u) => acc + u.length, 0);
+    const expansionRatio = ((outJs.length / js.length) * 100).toFixed(1);
 
     return {
       html: result,
-      stdout: log('URL-MATRIX',
-        `Round-trip verified. Obfuscated ${js.length} chars of JS into ${outJs.length} chars.`),
+      stdout: log('URL-COORDINATE-MATRIX',
+        `Original JS input: ${js.length} chars (${new TextEncoder().encode(js).length} bytes)`,
+        `URL matrix dataset: ${URLS.length} reference URLs loaded (${totalUrlSpace} total character lookup space)`,
+        `Direct coordinate hits: ${directHits} characters mapped (${((directHits / js.length) * 100).toFixed(1)}%)`,
+        `Hex codepoint fallbacks: ${hexFallbacks} characters encoded via hex matrix lookups`,
+        `Binary instruction buffer: ${payloadB64.length} base64 chars generated`,
+        `Compiled payload: ${outJs.length} chars generated for injection (${expansionRatio}% size ratio)`,
+        `Runtime execution sink: Function constructor in-memory reconstitution with fail-quiet wrapper`,
+        `Self-healing validation: 100% round-trip verified (source JS == unpacked JS)`,
+        `Injection boundary: Document structure parsed and script injected with placement variation`),
       stderr: '',
     };
   },

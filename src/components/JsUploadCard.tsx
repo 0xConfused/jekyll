@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileCode, Check, Trash2, Sparkles, Hash, RefreshCw } from 'lucide-react';
+import { Upload, FileCode, Check, Trash2, Hash, Eye } from 'lucide-react';
 import { computeSha256, formatBytes } from '../utils/cryptoUtils';
 
 interface JsUploadCardProps {
@@ -9,44 +9,17 @@ interface JsUploadCardProps {
   fileName: string;
   onFileLoaded: (content: string, name: string) => void;
   onClear: () => void;
+  onPreview?: () => void;
+  isPreviewActive?: boolean;
 }
-
-const DEFAULT_SAMPLE_JS = `// Interactive DOM Logic
-document.addEventListener("DOMContentLoaded", function() {
-  var target = document.getElementById("target-area") || document.body;
-  target.innerHTML = "";
-
-  var status = document.createElement("div");
-  status.style.color = "#bbc300";
-  status.style.fontWeight = "bold";
-  status.textContent = "Status: Script Subsystem Active.";
-
-  var btn = document.createElement("button");
-  btn.textContent = "DISPATCH PULSE";
-  btn.style.marginTop = "10px";
-  btn.style.padding = "6px 14px";
-  btn.style.background = "#c30800";
-  btn.style.color = "#f3f3f7";
-  btn.style.border = "none";
-  btn.style.cursor = "pointer";
-  btn.style.fontFamily = "monospace";
-
-  var count = 0;
-  btn.onclick = function() {
-    count++;
-    status.textContent = "Telemetry Pulses Recorded: " + count;
-    console.log("[TELEMETRY]", count, new Date().toISOString());
-  };
-
-  target.appendChild(status);
-  target.appendChild(btn);
-});`;
 
 export const JsUploadCard: React.FC<JsUploadCardProps> = ({
   value,
   fileName,
   onFileLoaded,
   onClear,
+  onPreview,
+  isPreviewActive = false,
 }) => {
   const [sha256, setSha256] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -119,26 +92,20 @@ export const JsUploadCard: React.FC<JsUploadCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!hasFile && (
-            <button
-              type="button"
-              onClick={() => onFileLoaded(DEFAULT_SAMPLE_JS, 'sample_script.js')}
-              className="px-2 py-0.5 text-[11px] font-mono border border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0] flex items-center gap-1 transition-colors"
-            >
-              <Sparkles className="w-3 h-3 text-[#c30800]" />
-              <span>LOAD SAMPLE</span>
-            </button>
-          )}
-
           {hasFile && (
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-2 py-0.5 text-[11px] font-mono border border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0] flex items-center gap-1 transition-colors"
+                onClick={onPreview}
+                className={`px-2 py-0.5 text-[11px] font-mono border flex items-center gap-1 transition-colors cursor-pointer ${
+                  isPreviewActive
+                    ? 'border-[#c30800] bg-[#262626] text-[#f3f3f7] font-bold shadow-sm'
+                    : 'border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0]'
+                }`}
+                title="Toggle JavaScript preview in output box"
               >
-                <RefreshCw className="w-3 h-3 text-[#c30800]" />
-                <span>REPLACE</span>
+                <Eye className="w-3 h-3 text-[#c30800]" />
+                <span>PREVIEW</span>
               </button>
               <button
                 type="button"

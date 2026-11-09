@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileCode, Check, Trash2, Sparkles, Hash, RefreshCw } from 'lucide-react';
+import { Upload, FileCode, Check, Trash2, Hash, Eye } from 'lucide-react';
 import { computeSha256, formatBytes } from '../utils/cryptoUtils';
 
 interface HtmlUploadCardProps {
@@ -9,60 +9,17 @@ interface HtmlUploadCardProps {
   fileName: string;
   onFileLoaded: (content: string, name: string) => void;
   onClear: () => void;
+  onPreview?: () => void;
+  isPreviewActive?: boolean;
 }
-
-const DEFAULT_SAMPLE_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Host Container</title>
-  <style>
-    body {
-      background: #0d0d0d;
-      color: #f0f0f0;
-      font-family: monospace;
-      margin: 0;
-      padding: 30px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      box-sizing: border-box;
-    }
-    .box {
-      background: #141414;
-      border: 1px solid #383838;
-      border-top: 3px solid #c30800;
-      padding: 24px;
-      max-width: 540px;
-      width: 100%;
-    }
-    h1 { font-size: 16px; margin: 0 0 10px 0; color: #f0f0f0; }
-    #target-area {
-      margin-top: 16px;
-      padding: 12px;
-      background: #0d0d0d;
-      border: 1px solid #2e2e2e;
-      color: #bbc300;
-      font-size: 12px;
-    }
-  </style>
-</head>
-<body>
-  <div class="box">
-    <h1>HOST APPARATUS CONTAINER</h1>
-    <div id="target-area">Awaiting script integration...</div>
-  </div>
-</body>
-</html>`;
 
 export const HtmlUploadCard: React.FC<HtmlUploadCardProps> = ({
   value,
   fileName,
   onFileLoaded,
   onClear,
+  onPreview,
+  isPreviewActive = false,
 }) => {
   const [sha256, setSha256] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -135,26 +92,20 @@ export const HtmlUploadCard: React.FC<HtmlUploadCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!hasFile && (
-            <button
-              type="button"
-              onClick={() => onFileLoaded(DEFAULT_SAMPLE_HTML, 'sample_index.html')}
-              className="px-2 py-0.5 text-[11px] font-mono border border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0] flex items-center gap-1 transition-colors"
-            >
-              <Sparkles className="w-3 h-3 text-[#c30800]" />
-              <span>LOAD SAMPLE</span>
-            </button>
-          )}
-
           {hasFile && (
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-2 py-0.5 text-[11px] font-mono border border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0] flex items-center gap-1 transition-colors"
+                onClick={onPreview}
+                className={`px-2 py-0.5 text-[11px] font-mono border flex items-center gap-1 transition-colors cursor-pointer ${
+                  isPreviewActive
+                    ? 'border-[#c30800] bg-[#262626] text-[#f3f3f7] font-bold shadow-sm'
+                    : 'border-[#383838] bg-[#1a1a1a] hover:bg-[#262626] text-[#8c8c8c] hover:text-[#f0f0f0]'
+                }`}
+                title="Preview uploaded HTML in the output box"
               >
-                <RefreshCw className="w-3 h-3 text-[#c30800]" />
-                <span>REPLACE</span>
+                <Eye className="w-3 h-3 text-[#c30800]" />
+                <span>PREVIEW</span>
               </button>
               <button
                 type="button"

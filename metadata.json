@@ -1,7 +1,6 @@
 {
-  "name": "html-js",
-  "description": "Javascript Injection Platform",
-  "requestFramePermissions": [],
+  "name": "./jekyll",
+  "description": "Compile and inject JavaScript into HTML documents.",
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

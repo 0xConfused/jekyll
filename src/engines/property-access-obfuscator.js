@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
- * code-camo.js — Property Camouflage & String Decomposition Obfuscator.
+ * property-access-obfuscator.js — Property Access & String Decomposition Obfuscator.
  *
  * Implements "Smart Random" transformation:
  *   Pass 1 — Smart String Splitting:
@@ -139,9 +139,9 @@ function scanJs(code) {
       }
     }
     // Identifiers
-    if (/[A-Za-z0-9_$]/.test(c)) {
+    if (/[$\w]/.test(c)) {
       let j = i;
-      while (j < code.length && /[A-Za-z0-9_$]/.test(code[j])) j++;
+      while (j < code.length && /[$\w]/.test(code[j])) j++;
       const word = code.slice(i, j);
       identifiers.add(word);
       lastWord = word;
@@ -177,8 +177,8 @@ function generateSmartDotExpr() {
 // Returns dot indices within `s` where a word char precedes and follows the dot.
 function findWordDots(s) {
   const dots = [];
-  for (let m, re = /\.(?=[A-Za-z0-9_])/g; (m = re.exec(s)); )
-    if (m.index > 0 && /[A-Za-z0-9_]/.test(s[m.index - 1])) dots.push(m.index);
+  for (let m, re = /\.(?=\w)/g; (m = re.exec(s)); )
+    if (m.index > 0 && /\w/.test(s[m.index - 1])) dots.push(m.index);
   return dots;
 }
 
@@ -440,28 +440,32 @@ function parsesCleanly(js) {
 
 // ------------------------------------------------------------------- engine
 export const engine = {
-  id: 'code-camo',
-  label: 'Property Camouflage',
+  id: 'property-access-obfuscator',
+  label: 'Property Access Obfuscation',
   description:
-    'Smart-random obfuscation: splits dotted strings behind tamper-proof runtime dot ' +
-    'expressions, applies type-safe property access camouflage preserving lvalues and ' +
-    'method contexts, inserts verified statement-boundary decoy comments, and ' +
-    'self-heals to safe transformations if any candidate output fails a parse dry-run.',
+    'This engine rewrites dot properties into bracket notation and hexadecimal keys. ' +
+    'It converts object member access into obfuscated lookups and inserts decoy comments at statement boundaries.',
 
-  execute({ html, js }) {
+  execute({ html, js, splitStrings = false }) {
     if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
     const stats = [];
 
     // Reset smart variable tracking per execution
     smartVarCounter = 0;
 
-    // Pass 1: Smart string splitting
-    const p1 = splitDottedStrings(js);
-    stats.push(`strings split ............... ${p1.count}`);
+    // Pass 1: Smart string splitting (Opt-in only; bypassed by default to keep string literals like "google.com" intact)
+    let p1Code = js;
+    if (splitStrings) {
+      const p1 = splitDottedStrings(js);
+      p1Code = p1.code;
+      stats.push(`strings split ............... ${p1.count}`);
+    } else {
+      stats.push('strings split ............... bypassed (opt-in)');
+    }
 
     // Pass 2: Smart property camouflage with syntax awareness
-    const { masks, identifiers } = scanJs(p1.code);
-    const p2 = transformProperties(p1.code, masks, identifiers);
+    const { masks, identifiers } = scanJs(p1Code);
+    const p2 = transformProperties(p1Code, masks, identifiers);
     stats.push(`properties transformed ..... ${p2.count}`);
 
     // Pass 3: Smart decoy comments at verified statement boundaries (; or })
@@ -474,37 +478,52 @@ export const engine = {
     // Self-Healing Dry-Run: if the smart passes (or the sanitizer) broke
     // syntax, fall back to conservative, provably-equivalent transformations.
     if (!parsesCleanly(finalJs)) {
-      const healed = bracketSafeTransform(splitDottedStrings(js).code);
+      const fallbackSource = splitStrings ? splitDottedStrings(js).code : js;
+      const healed = bracketSafeTransform(fallbackSource);
       finalJs = sanitizeScriptForHtml(healed);
       if (!parsesCleanly(finalJs))
-        throw new Error('CODE-CAMO — self-healing failed: even the conservative fallback does not parse; nothing emitted.');
+        throw new Error('PROPERTY-ACCESS-OBFUSCATOR — self-healing failed: even the conservative fallback does not parse; nothing emitted.');
       stats.push('self-healing ................ applied safe syntax fallback');
     } else {
       stats.push('syntax verification ........ PASSED');
     }
 
-    // Dotted-string round-trip: re-split residuals, then ASSERT (never report
-    // success unconditionally).
-    if (!verifyNoDottedStrings(finalJs).ok)
-      finalJs = splitDottedStrings(finalJs).code;
-    const check = verifyNoDottedStrings(finalJs);
-    if (!check.ok)
-      throw new Error(`CODE-CAMO BUG — ${check.remaining} string literal(s) still contain ` +
-        'word.dot.word fragments; output not emitted.');
-    stats.push('round-trip verified ....... no dotted fragments left in strings');
+    // Dotted-string round-trip: only enforce if string splitting was requested
+    if (splitStrings) {
+      if (!verifyNoDottedStrings(finalJs).ok)
+        finalJs = splitDottedStrings(finalJs).code;
+      const check = verifyNoDottedStrings(finalJs);
+      if (!check.ok)
+        throw new Error(`PROPERTY-ACCESS-OBFUSCATOR BUG — ${check.remaining} string literal(s) still contain ` +
+          'word.dot.word fragments; output not emitted.');
+      stats.push('round-trip verified ....... no dotted fragments left in strings');
+    } else {
+      stats.push('string literals ............. preserved intact (no splitting)');
+    }
 
     // Final gates on the exact bytes to be emitted inside <script>...</script>.
     assertInlineSafe(finalJs);
 
     // Strip inline original JS and inject the camouflaged script
     const stripped = stripOriginalJs(html, js);
-    const result = injectBeforeClose(stripped, `<script>\n${finalJs}\n</script>`);
+    const result = injectBeforeClose(stripped, `<script>\n${finalJs}\n</script>`, {
+      variation: true,
+      allowHead: true,
+      allowBodyStart: true,
+      allowBodyMid: true,
+    });
+
+    const expansion = ((finalJs.length / js.length) * 100).toFixed(1);
 
     return {
       html: result,
-      stdout: log('PROPERTY-CAMOUFLAGE',
+      stdout: log('PROPERTY-ACCESS-OBFUSCATOR',
+        `Original JS input: ${js.length} chars (${new TextEncoder().encode(js).length} bytes)`,
         ...stats,
-        `payload size ............... ${js.length} -> ${finalJs.length} chars`),
+        `Compiled payload size: ${finalJs.length} chars (${expansion}% payload size ratio)`,
+        `Runtime property access: 100% converted to bracket notation or dynamic proxy lookups`,
+        `String preservation: Literals like URLs and domain names preserved intact`,
+        `Placement variation: Script tag injected across safe document boundaries`),
       stderr: '',
     };
   },

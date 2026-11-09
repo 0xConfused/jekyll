@@ -132,22 +132,79 @@ export function stripOriginalJs(html, js) {
 }
 
 /**
- * Injects payload before the closing </body>, </html>, or EOF.
+ * Injects payload before the closing </body>, </html>, or EOF, optionally allowing placement variation.
  * @param {string} html
  * @param {string} payload
- * @param {{ newline?: boolean }} options
+ * @param {{ newline?: boolean, variation?: boolean, allowHead?: boolean, allowBodyStart?: boolean, allowBodyMid?: boolean, placement?: 'head'|'body-start'|'body-mid'|'body-end' }} options
  * @returns {string}
  */
 export function injectBeforeClose(html, payload, options = {}) {
   const nl = options.newline === false ? '' : '\n';
-  const block = nl + payload + nl;
-  if (html.includes('</body>')) {
-    return html.replace('</body>', `${block}</body>`);
+  const block = `${nl}${payload}${nl}`;
+
+  if (options.variation) {
+    const candidates = [];
+    const hasHead = /<\/head\s*>/i.test(html);
+    const hasBodyOpen = /<body\b[^>]*>/i.test(html);
+    const hasBodyClose = /<\/body\s*>/i.test(html);
+
+    if (options.allowHead && hasHead) {
+      candidates.push('head');
+    }
+    if (options.allowBodyStart !== false && hasBodyOpen) {
+      candidates.push('body-start');
+    }
+    if (options.allowBodyMid && hasBodyOpen && hasBodyClose) {
+      const midMatch = /<\/(?:header|nav|div|section|article|main)\s*>/gi;
+      if (midMatch.test(html)) {
+        candidates.push('body-mid');
+      }
+    }
+    if (hasBodyClose) {
+      candidates.push('body-end');
+    }
+
+    if (candidates.length > 0) {
+      const chosen = options.placement || secureChoice(candidates);
+      if (chosen === 'head') {
+        return html.replace(/<\/head\s*>/i, (m) => `${block}${m}`);
+      }
+      if (chosen === 'body-start') {
+        return html.replace(/(<body\b[^>]*>)/i, (m) => `${m}${block}`);
+      }
+      if (chosen === 'body-mid') {
+        const midMatch = /<\/(?:header|nav|div|section|article|main)\s*>/gi;
+        const matches = [...html.matchAll(midMatch)];
+        if (matches.length > 0) {
+          const pick = secureChoice(matches);
+          const idx = pick.index + pick[0].length;
+          return html.slice(0, idx) + block + html.slice(idx);
+        }
+      }
+      if (chosen === 'body-end' && hasBodyClose) {
+        return html.replace(/<\/body\s*>/i, (m) => `${block}${m}`);
+      }
+    }
   }
-  if (html.includes('</html>')) {
-    return html.replace('</html>', `${block}</html>`);
+
+  if (/<\/body\s*>/i.test(html)) {
+    return html.replace(/<\/body\s*>/i, (match) => `${block}${match}`);
+  }
+  if (/<\/html\s*>/i.test(html)) {
+    return html.replace(/<\/html\s*>/i, (match) => `${block}${match}`);
   }
   return html + block;
+}
+
+/**
+ * Injects payload allowing placement variation across document boundaries (body-start, body-mid, body-end, head).
+ * @param {string} html
+ * @param {string} payload
+ * @param {{ newline?: boolean, allowHead?: boolean, allowBodyStart?: boolean, allowBodyMid?: boolean, placement?: 'head'|'body-start'|'body-mid'|'body-end' }} options
+ * @returns {string}
+ */
+export function injectWithPlacementVariation(html, payload, options = {}) {
+  return injectBeforeClose(html, payload, { ...options, variation: true });
 }
 
 /**
@@ -356,19 +413,29 @@ export async function selectImage(imgTags) {
  * @returns {{ spots: number[], names: string[] }}
  */
 export function parseTagAttributes(html, tagStart) {
-  const tagEnd = html.indexOf('>', tagStart);
+  let inQuote = null;
+  let tagEnd = -1;
+  for (let i = tagStart; i < html.length; i++) {
+    const ch = html[i];
+    if (inQuote) {
+      if (ch === inQuote) inQuote = null;
+    } else {
+      if (ch === '"' || ch === "'") inQuote = ch;
+      else if (ch === '>') { tagEnd = i; break; }
+    }
+  }
   if (tagEnd === -1) return { spots: [tagStart + 4], names: [] };
 
   const tagContent = html.slice(tagStart, tagEnd);
   const names = [];
   const spots = [];
 
-  const tagNameMatch = /^<[a-zA-Z0-9_-]+/i.exec(tagContent);
+  const tagNameMatch = /^<[\w-]+/i.exec(tagContent);
   if (tagNameMatch) {
     spots.push(tagStart + tagNameMatch[0].length);
   }
 
-  const attrRegex = /([a-zA-Z0-9_-]+)(?:\s*=\s*(?:["'][^"']*["']|[^\s>]+))?/g;
+  const attrRegex = /([\w-]+)(?:\s*=\s*(?:["'][^"']*["']|[^\s>]+))?/g;
   let m;
   while ((m = attrRegex.exec(tagContent)) !== null) {
     if (m.index === 0) continue;
@@ -382,3 +449,13 @@ export function parseTagAttributes(html, tagStart) {
 
   return { spots, names };
 }
+
+/**
+ * Shared regular expressions for HTML tokenization, comment scanning, and script block extraction.
+ */
+export const RE = {
+  comment: /<!--[\s\S]*?-->/g,
+  scriptBlock: /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
+  bodyClose: /<\/body\s*>/gi,
+  htmlClose: /<\/html\s*>/gi,
+};

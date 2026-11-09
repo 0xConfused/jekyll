@@ -13,12 +13,14 @@ export const Footer: React.FC = () => {
       <div className="wrap footer-wrap">
         <div className="footer-primary-row">
           <div className="footer-identity font-mono">
-            <span
-              className="footer-handle font-glitch font-normal cursor-default"
-              title="0xCONFUSED"
+            <a
+              href="https://www.0xconfused.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="footer-handle font-glitch font-normal cursor-pointer transition-colors no-underline"
             >
               {BRAND_NAME}
-            </span>
+            </a>
             <span className="footer-sep">/</span>
             <span className="footer-name font-mono text-[#f0f0f0]">./jekyll</span>
             <span className="footer-sep">//</span>
@@ -31,10 +33,6 @@ export const Footer: React.FC = () => {
           </div>
 
           <div className="footer-links font-mono">
-            <span className="text-[#8c8c8c] text-[11.5px]" title="Node.js v18+ Compatible">
-              Node.js v18+
-            </span>
-            <span className="footer-sep">&bull;</span>
             <span
               className="footer-spec hover:text-[#8c8c8c] transition-colors cursor-default"
               title="SPDX-License-Identifier: AGPL-3.0-or-later"
