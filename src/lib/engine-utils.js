@@ -57,30 +57,6 @@ export async function loadEsm(url) {
   return import(/* @vite-ignore */ url);
 }
 
-/**
- * Dynamically loads a UMD library script into document.head and resolves window[globalName].
- * @param {string} url
- * @param {string} globalName
- * @returns {Promise<any>}
- */
-export async function loadUmd(url, globalName) {
-  if (typeof window !== 'undefined' && window[globalName]) {
-    return window[globalName];
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = url;
-    script.onload = () => {
-      if (window[globalName]) {
-        resolve(window[globalName]);
-      } else {
-        reject(new Error(`UMD library ${globalName} not found on window after loading ${url}`));
-      }
-    };
-    script.onerror = (err) => reject(new Error(`Failed to load script ${url}: ${err}`));
-    document.head.appendChild(script);
-  });
-}
 
 /**
  * Formats multi-line diagnostic log messages for engine stdout.
@@ -102,14 +78,6 @@ export function extractUniqueChars(html) {
   return Array.from(set).join('');
 }
 
-/**
- * Safely serializes a string into a valid JavaScript literal representation.
- * @param {string} str
- * @returns {string}
- */
-export function jsStringLiteral(str) {
-  return JSON.stringify(str);
-}
 
 /**
  * Strips occurrences of the original JS payload from the HTML source.
@@ -196,16 +164,6 @@ export function injectBeforeClose(html, payload, options = {}) {
   return html + block;
 }
 
-/**
- * Injects payload allowing placement variation across document boundaries (body-start, body-mid, body-end, head).
- * @param {string} html
- * @param {string} payload
- * @param {{ newline?: boolean, allowHead?: boolean, allowBodyStart?: boolean, allowBodyMid?: boolean, placement?: 'head'|'body-start'|'body-mid'|'body-end' }} options
- * @returns {string}
- */
-export function injectWithPlacementVariation(html, payload, options = {}) {
-  return injectBeforeClose(html, payload, { ...options, variation: true });
-}
 
 /**
  * Compares two byte arrays for byte-by-byte equality.
@@ -450,12 +408,4 @@ export function parseTagAttributes(html, tagStart) {
   return { spots, names };
 }
 
-/**
- * Shared regular expressions for HTML tokenization, comment scanning, and script block extraction.
- */
-export const RE = {
-  comment: /<!--[\s\S]*?-->/g,
-  scriptBlock: /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
-  bodyClose: /<\/body\s*>/gi,
-  htmlClose: /<\/html\s*>/gi,
-};
+

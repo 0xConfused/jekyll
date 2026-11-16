@@ -100,16 +100,6 @@ function unpack(packed, charset, W) {
   return out.join('');
 }
 
-let nodeJsdom = null;
-if (typeof window === 'undefined' && typeof process !== 'undefined') {
-  try {
-    const req = typeof require !== 'undefined' ? require : (0, eval)('require');
-    if (typeof req === 'function') {
-      const jsdomMod = req('jsdom');
-      nodeJsdom = jsdomMod.JSDOM || jsdomMod.default?.JSDOM;
-    }
-  } catch {}
-}
 
 function extractFromElements(html) {
   let doc = null;
@@ -124,20 +114,7 @@ function extractFromElements(html) {
       doc.documentElement.innerHTML = html;
     } catch {}
   }
-  if (!doc && nodeJsdom) {
-    try {
-      doc = new nodeJsdom(html).window.document;
-    } catch {}
-  }
-  if (!doc && typeof process !== 'undefined') {
-    try {
-      const req = typeof require !== 'undefined' ? require : (0, eval)('require');
-      if (typeof req === 'function') {
-        const { JSDOM } = req('jsdom');
-        doc = new JSDOM(html).window.document;
-      }
-    } catch {}
-  }
+
 
   if (doc) {
     const all = doc.all || doc.getElementsByTagName('*');

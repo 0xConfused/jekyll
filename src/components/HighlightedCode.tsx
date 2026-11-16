@@ -164,12 +164,11 @@ function getTokenTextColor(type: TokenType): string {
 
 interface HighlightedCodeProps {
   line: string;
-  isAddedLine?: boolean;
   charSpans?: CharDiffSpan[];
 }
 
 export const HighlightedCode: React.FC<HighlightedCodeProps> = React.memo(
-  ({ line, isAddedLine = false, charSpans }) => {
+  ({ line, charSpans }) => {
     if (!line) {
       return <span> </span>;
     }

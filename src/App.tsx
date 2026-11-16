@@ -28,9 +28,6 @@ export default function App() {
   const [jsCode, setJsCode] = useState<string>('');
   const [jsFileName, setJsFileName] = useState<string>('');
 
-  // Output: 1 HTML file every time (strictly {{filehash}}.html)
-  const [outputFileName, setOutputFileName] = useState<string>('{{filehash}}.html');
-
   // Execution state (ephemeral, no archive)
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [result, setResult] = useState<ExecutionResult | null>(null);
@@ -101,10 +98,6 @@ export default function App() {
 
   const handleSelectProfile = (id: string) => {
     setSelectedProfileId(id);
-    const profile = profiles.find((p) => p.id === id);
-    if (profile?.defaultOutputName) {
-      setOutputFileName(profile.defaultOutputName);
-    }
     if (activeView === 'detections') {
       try {
         window.location.hash = `#detections/${id}`;
@@ -117,7 +110,6 @@ export default function App() {
     setHtmlFileName('');
     setJsCode('');
     setJsFileName('');
-    setOutputFileName('{{filehash}}.html');
     setResult(null);
     setActivePreviewMode('none');
   };
@@ -243,7 +235,6 @@ export default function App() {
             profiles={profiles}
             selectedProfileId={selectedProfileId}
             onSelectProfile={handleSelectProfile}
-            onBackToCompiler={() => handleNavigateView('compiler')}
           />
         ) : (
           <>
@@ -324,7 +315,6 @@ export default function App() {
                   inputJs={jsCode}
                   inputJsFileName={jsFileName}
                   activePreviewMode={activePreviewMode}
-                  onSelectPreviewMode={setActivePreviewMode}
                   isExpanded={isExpandedOutput}
                   onToggleExpand={() => setIsExpandedOutput((prev) => !prev)}
                 />

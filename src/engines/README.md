@@ -62,6 +62,6 @@ The `execute` function may return synchronously or return a `Promise`. The retur
 
 ## Adding a New Engine
 
-1. Copy `src/engines/engine.template.js` to `src/engines/<your_engine_name>.js`.
+1. Create a new module at `src/engines/<your_engine_name>.js` following the interface specification above.
 2. Implement your custom AST parsing, regex replacement, or script concatenation logic inside `execute`.
 3. Run `npm run build`. The generated `dist/` contains the fully updated, self-contained static application.

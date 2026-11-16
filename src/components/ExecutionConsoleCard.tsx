@@ -19,7 +19,6 @@ interface ExecutionConsoleCardProps {
   inputJs?: string;
   inputJsFileName?: string;
   activePreviewMode?: ActivePreviewMode;
-  onSelectPreviewMode?: (mode: ActivePreviewMode) => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
 }
@@ -35,14 +34,12 @@ export const ExecutionConsoleCard: React.FC<ExecutionConsoleCardProps> = ({
   inputJs = '',
   inputJsFileName = '',
   activePreviewMode = 'none',
-  onSelectPreviewMode,
   isExpanded = false,
   onToggleExpand,
 }) => {
   const [activeTab, setActiveTab] = useState<OutputSubTab>('preview');
   const [copied, setCopied] = useState<boolean>(false);
   const [previewKey, setPreviewKey] = useState<number>(0);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const codeScrollRef = useRef<HTMLDivElement>(null);
   const [scrollbarHeight, setScrollbarHeight] = useState<number>(0);
@@ -435,14 +432,15 @@ export const ExecutionConsoleCard: React.FC<ExecutionConsoleCardProps> = ({
         ) : effectiveTab === 'preview' ? (
           /* Live Render sandboxed iframe directly filling space with matching scrollbars */
           activeContent ? (
-            <div className={`w-full h-full flex-1 overflow-auto bg-[#0d0d0d] ${scrollbarClasses}`}>
+            <div className="w-full h-full flex-1 overflow-hidden bg-[#0d0d0d]">
               <iframe
                 key={previewKey}
-                ref={iframeRef}
                 srcDoc={previewSrcDoc}
                 title={getHeaderTitle()}
-                sandbox="allow-scripts allow-modals"
-                className="w-full h-full border-none bg-white/5"
+                sandbox="allow-scripts"
+                referrerPolicy="no-referrer"
+                allow="accelerometer 'none'; ambient-light-sensor 'none'; autoplay 'none'; battery 'none'; camera 'none'; clipboard-read 'none'; clipboard-write 'none'; display-capture 'none'; encrypted-media 'none'; fullscreen 'none'; geolocation 'none'; gyroscope 'none'; hid 'none'; magnetometer 'none'; microphone 'none'; midi 'none'; payment 'none'; picture-in-picture 'none'; publickey-credentials-get 'none'; screen-wake-lock 'none'; serial 'none'; usb 'none'; xr-spatial-tracking 'none'"
+                className="block w-full h-full border-0 bg-white/5"
               />
             </div>
           ) : (
@@ -494,7 +492,7 @@ export const ExecutionConsoleCard: React.FC<ExecutionConsoleCardProps> = ({
                       key={idx + 1}
                       className="leading-5 h-5 px-3 whitespace-pre font-mono text-[#f0f0f0] border-l-2 border-transparent block w-full"
                     >
-                      <HighlightedCode line={line} isAddedLine={false} />
+                      <HighlightedCode line={line} />
                     </div>
                   ))}
                 </div>
@@ -555,7 +553,6 @@ export const ExecutionConsoleCard: React.FC<ExecutionConsoleCardProps> = ({
                     >
                       <HighlightedCode
                         line={item.line}
-                        isAddedLine={item.isChanged}
                         charSpans={item.charSpans}
                       />
                     </div>

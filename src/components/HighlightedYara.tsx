@@ -69,8 +69,6 @@ const YARA_MODIFIERS = new Set([
   'global',
 ]);
 
-const YARA_SECTIONS = new Set(['meta:', 'strings:', 'condition:']);
-
 /**
  * Tokenizes a single line of YARA code for accurate syntax highlighting.
  */

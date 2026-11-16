@@ -31,12 +31,3 @@ export interface ExecutionResult {
   outputFile: OutputFileArtifact | null;
   timestamp: number;
 }
-
-export interface SystemStatus {
-  runtime: string;
-  activeCachedArtifacts: number;
-  nodeVersion: string;
-  platform: string;
-  arch: string;
-  systemUptime: number;
-}
