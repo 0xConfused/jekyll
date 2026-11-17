@@ -11,7 +11,12 @@ import { ScriptSelectorBar } from './components/ScriptSelectorBar';
 import { HtmlUploadCard } from './components/HtmlUploadCard';
 import { JsUploadCard } from './components/JsUploadCard';
 import { ExecutionConsoleCard } from './components/ExecutionConsoleCard';
-import { OwnershipWarningModal } from './components/OwnershipWarningModal';
+import {
+  OwnershipWarningModal,
+  LIABILITY_STORAGE_KEY,
+  TERMS_VERSION,
+  LiabilityAcceptanceReceipt,
+} from './components/OwnershipWarningModal';
 import { Footer } from './components/Footer';
 import { DetectionSpecsPage } from './components/DetectionSpecsPage';
 import { getAllEngineProfiles, getEngine, DEFAULT_ENGINE_ID } from './engines';
@@ -37,15 +42,23 @@ export default function App() {
   // Ownership banner modal
   const [showOwnershipWarning, setShowOwnershipWarning] = useState<boolean>(() => {
     try {
-      return !sessionStorage.getItem('0xconfused_runner_agreed');
+      const raw = localStorage.getItem(LIABILITY_STORAGE_KEY);
+      if (!raw) return true;
+      const parsed = JSON.parse(raw) as Partial<LiabilityAcceptanceReceipt> | null;
+      return !(
+        parsed?.termsVersion === TERMS_VERSION &&
+        parsed?.userAcknowledgment?.ownershipConfirmed === true &&
+        parsed?.userAcknowledgment?.payloadImpactUnderstood === true &&
+        parsed?.userAcknowledgment?.termsAgreed === true
+      );
     } catch {
       return true;
     }
   });
 
-  const handleAgreeOwnership = () => {
+  const handleAgreeOwnership = (receipt: LiabilityAcceptanceReceipt) => {
     try {
-      sessionStorage.setItem('0xconfused_runner_agreed', 'true');
+      localStorage.setItem(LIABILITY_STORAGE_KEY, JSON.stringify(receipt));
     } catch {}
     setShowOwnershipWarning(false);
   };

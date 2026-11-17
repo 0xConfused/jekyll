@@ -211,19 +211,41 @@ export const ExecutionConsoleCard: React.FC<ExecutionConsoleCardProps> = ({
 }
 </style>
 `;
-    if (isHtmlPreview && inputHtml) {
-      if (/<\/head\s*>/i.test(inputHtml)) {
-        return inputHtml.replace(/<\/head\s*>/i, (m) => `${scrollbarStyle}${m}`);
+    const injectBeforeHead = (docHtml: string) => {
+      const masks: Array<[number, number]> = [];
+      const maskPatterns = [
+        /<!--[\s\S]*?(?:-->|$)/g,
+        /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/script\s*>|$)/gi,
+        /<style\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/style\s*>|$)/gi,
+        /<textarea\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/textarea\s*>|$)/gi,
+        /<title\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/title\s*>|$)/gi,
+      ];
+      for (const re of maskPatterns) {
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(docHtml)) !== null) {
+          if (m[0].length === 0) break;
+          masks.push([m.index, m.index + m[0].length]);
+        }
       }
-      return `${scrollbarStyle}${inputHtml}`;
+      const headCloseRe = /<\/head\s*>/gi;
+      let hm: RegExpExecArray | null;
+      while ((hm = headCloseRe.exec(docHtml)) !== null) {
+        const start = hm.index;
+        const end = start + hm[0].length;
+        if (!masks.some(([ms, me]) => start < me && end > ms)) {
+          return docHtml.slice(0, start) + scrollbarStyle + docHtml.slice(start);
+        }
+      }
+      return `${scrollbarStyle}${docHtml}`;
+    };
+
+    if (isHtmlPreview && inputHtml) {
+      return injectBeforeHead(inputHtml);
     }
 
     const content = result?.outputFile?.content;
     if (!content) return '';
-    if (/<\/head\s*>/i.test(content)) {
-      return content.replace(/<\/head\s*>/i, (m) => `${scrollbarStyle}${m}`);
-    }
-    return `${scrollbarStyle}${content}`;
+    return injectBeforeHead(content);
   }, [isExpanded, isHtmlPreview, inputHtml, result?.outputFile?.content]);
 
   const linesCount = result?.outputFile?.content ? result.outputFile.content.split('\n').length : 0;

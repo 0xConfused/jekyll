@@ -77,16 +77,18 @@ function buildZipStore(name, data) {
 const FINDERS = {
   'image/png':
     'const v=new DataView(b.buffer,b.byteOffset,b.byteLength);let o=8;' +
-    'while(o+8<=b.length){const l=v.getUint32(o),t=String.fromCharCode.apply(null,b.slice(o+4,o+8));' +
+    'while(o+12<=b.length){const l=v.getUint32(o),t=String.fromCharCode.apply(null,b.slice(o+4,o+8));' +
     'o+=8+l+4;if(t=="IEND")return o;}return -1;',
   'image/jpeg':
     'let o=2;const v=new DataView(b.buffer,b.byteOffset,b.byteLength);' +
-    'while(o+4<=b.length){const m=b[o+1];if(m==217)return o+2;if(m>=208&&m<=215){o+=2;continue;}' +
-    'const s=v.getUint16(o+2);o+=2+s;if(m==218){for(let i=o;i<b.length-1;i++)if(b[i]==255&&b[i+1]==217)return i+2;return -1;}}return -1;',
+    'while(o+2<=b.length){if(b[o]!=255)return -1;while(o+1<b.length&&b[o+1]==255)o++;if(o+2>b.length)return -1;' +
+    'const m=b[o+1];if(m==217)return o+2;if(m==0||m==1||(m>=208&&m<=215)){o+=2;continue;}' +
+    'if(o+4>b.length)return -1;const s=v.getUint16(o+2);if(s<2)return -1;o+=2+s;' +
+    'if(m==218){for(let i=o;i<b.length-1;i++)if(b[i]==255&&b[i+1]==217)return i+2;return -1;}}return -1;',
   'image/gif':
     'let o=13;const p=b[10];if(p&128)o+=3*(1<<((p&7)+1));' +
-    'while(o<b.length){const k=b[o];if(k==59)return o+1;if(k==33){o+=2;while(b[o])o+=b[o]+1;o++;}' +
-    'else if(k==44){const l=b[o+9];o+=10;if(l&128)o+=3*(1<<((l&7)+1));o++;while(b[o])o+=b[o]+1;o++;}else return -1;}return -1;',
+    'while(o<b.length){const k=b[o];if(k==59)return o+1;if(k==33){o+=2;while(o<b.length&&b[o])o+=b[o]+1;o++;}' +
+    'else if(k==44){if(o+9>=b.length)return -1;const l=b[o+9];o+=10;if(l&128)o+=3*(1<<((l&7)+1));o++;while(o<b.length&&b[o])o+=b[o]+1;o++;}else return -1;}return -1;',
 };
 
 // Self-contained, zero-network unpacker that parses the trailing zip structure directly
@@ -101,7 +103,7 @@ function buildDebugScript(mime, imgIndex) {
     `var s=i.src;let b;` +
     `if(s.startsWith("data:")){var bin=atob(s.split(",")[1]);b=new Uint8Array(bin.length);for(var k=0;k<bin.length;k++)b[k]=bin.charCodeAt(k);}` +
     `else{b=new Uint8Array(await(await fetch(s)).arrayBuffer());}` +
-    `var z=b.slice(F(b));` +
+    `var end=F(b);if(end<0)return;var z=b.slice(end);` +
     `for(var p=0;p<=z.length-30;p++){` +
     `if(z[p]===80&&z[p+1]===75&&z[p+2]===3&&z[p+3]===4){` +
     `var dv=new DataView(z.buffer,z.byteOffset+p,30);` +
@@ -123,12 +125,14 @@ export const engine = {
     'An unpacker script extracts and executes the payload from the image data URI.',
 
   async execute({ html, js }) {
+    if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
+
     // Standard engine parsing pipeline: strip inline original JS first
     let workingHtml = stripOriginalJs(html, js);
     let imgTags = findImgTags(workingHtml);
     if (!imgTags.length) {
       const carrierImg = '<img id="carrier-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAWUlEQVRYR+2WwQkAMAhD6790F3WCOkEFPxJ40EtJ85o5s11n9m6Bq/4tA3oG9Azov0Avw8m90DOgZ0DPgJ4BPQN6BvQM6BnQM6BnQM+AngE9A3oG9Az8nIEP2l73E2wMsqEAAAAASUVORK5CYII=" style="display:none;" />';
-      workingHtml = injectBeforeClose(workingHtml, carrierImg, { variation: true, allowBodyStart: true });
+      workingHtml = injectBeforeClose(workingHtml, carrierImg, { variation: false });
       imgTags = findImgTags(workingHtml);
     }
 
@@ -142,11 +146,10 @@ export const engine = {
       workingHtml, srcStart, srcEnd, `data:${mime};base64,${bytesToBase64(combined)}`,
     );
 
+    // Place unpacker at document end so both carrier <img> and DOM elements exist before execution
     newHtml = injectBeforeClose(newHtml, buildDebugScript(mime, index), {
       newline: false,
-      variation: true,
-      allowBodyStart: true,
-      allowBodyMid: true,
+      variation: false,
     });
 
     const totalBytes = combined.length;

@@ -1,14 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import React, { useEffect, useState, useRef } from 'react';
-import { ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 const BRAND_NAME = '0xCONFUSED';
 const SCRAMBLE_CHARS = '!@#$%^&*<>[]_01';
 
+export const TERMS_VERSION = '2026.2';
+export const SOFTWARE_VERSION = '1.0.0';
+export const LIABILITY_STORAGE_KEY = '0xconfused_liability_accepted_v2';
+
+export interface LiabilityAcceptanceReceipt {
+  acceptedAt: string;
+  termsVersion: string;
+  softwareVersion: string;
+  userAcknowledgment: {
+    ownershipConfirmed: boolean;
+    payloadImpactUnderstood: boolean;
+    termsAgreed: boolean;
+    status: 'accepted';
+  };
+}
+
 interface OwnershipWarningModalProps {
   isOpen: boolean;
-  onAgree: () => void;
+  onAgree: (receipt: LiabilityAcceptanceReceipt) => void;
 }
 
 export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
@@ -16,10 +32,15 @@ export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
   onAgree,
 }) => {
   const [scrambleText, setScrambleText] = useState<string>(BRAND_NAME);
+  const [confirmAuth, setConfirmAuth] = useState<boolean>(false);
+  const [confirmImpact, setConfirmImpact] = useState<boolean>(false);
+  const [confirmTerms, setConfirmTerms] = useState<boolean>(false);
   const hasAnimatedRef = useRef<boolean>(false);
 
+  const canAgree = confirmAuth && confirmImpact && confirmTerms;
+
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -46,6 +67,9 @@ export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
       }
     } else {
       document.body.style.overflow = 'unset';
+      setConfirmAuth(false);
+      setConfirmImpact(false);
+      setConfirmTerms(false);
     }
 
     return () => {
@@ -56,21 +80,39 @@ export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleConfirm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canAgree) return;
+    const receipt: LiabilityAcceptanceReceipt = {
+      acceptedAt: new Date().toISOString(),
+      termsVersion: TERMS_VERSION,
+      softwareVersion: SOFTWARE_VERSION,
+      userAcknowledgment: {
+        ownershipConfirmed: true,
+        payloadImpactUnderstood: true,
+        termsAgreed: true,
+        status: 'accepted',
+      },
+    };
+    onAgree(receipt);
+  };
+
   return (
     <div
       id="ownership-warning-modal"
-      className="fixed inset-0 z-[999] flex items-center justify-center p-4 sm:p-6 bg-black/90 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-[999] flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200"
     >
       <div
-        className="relative w-full max-w-xl bg-[#141414] border border-[#383838] rounded-none shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="relative w-full max-w-2xl bg-[#141414] border border-[#383838] rounded-none shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="ownership-warning-title"
+        aria-labelledby="terms-of-use-title"
       >
         <div className="h-[2px] w-full bg-gradient-to-r from-[#c30800] via-[#c300bb] to-[#bbc300]" />
-        {/* Status Header Banner */}
-        <div className="bg-[#141414] backdrop-blur-sm bg-gradient-to-r from-[#c30800]/10 via-transparent to-transparent px-5 h-16 border-b border-[#383838] flex items-center">
-          <div className="flex items-center gap-3 min-w-0 h-full">
+
+        {/* Modal Brand Header */}
+        <div className="bg-[#141414] backdrop-blur-sm bg-gradient-to-r from-[#c30800]/10 via-transparent to-transparent px-5 h-16 border-b border-[#383838] flex items-center justify-between">
+          <div className="flex items-center gap-3.5 min-w-0 h-full">
             <div className="brand-logo-slot">
               <div className="brand-logo-inner" aria-hidden="true">
                 <img
@@ -96,79 +138,108 @@ export const OwnershipWarningModal: React.FC<OwnershipWarningModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div
-          className="p-5 sm:p-6 space-y-4 overflow-y-auto font-mono text-xs text-[#8c8c8c] leading-relaxed"
-        >
-          <div className="flex items-start gap-3 p-3.5 rounded-none bg-[#141414] border border-[#383838]">
-            <ShieldAlert className="w-5 h-5 text-[#c36a00] shrink-0 mt-0.5" />
-            <div>
+        <form onSubmit={handleConfirm} className="flex flex-col flex-1 min-h-0">
+          <div className="p-5 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar font-mono text-xs text-[#8c8c8c] leading-relaxed">
+            <div className="space-y-3 bg-[#141414] p-4 rounded-none border border-[#2e2e2e]">
               <h2
-                id="ownership-warning-title"
-                className="font-bold text-sm text-[#f0f0f0] uppercase tracking-wide mb-1"
+                id="terms-of-use-title"
+                className="text-sm font-bold font-mono uppercase tracking-widest text-[#f0f0f0] flex items-center gap-2.5 pb-2.5 border-b border-[#2e2e2e]"
               >
-                Javascript Injection Platform Advisory
+                <span className="w-2 h-2 bg-[#c30800] shrink-0 shadow-[0_0_8px_rgba(195,8,0,0.6)]" />
+                <span>Terms of Use &amp; Scope of Authorization</span>
               </h2>
-              <p className="text-[11px] text-[#8c8c8c]">
-                Operational compliance and authorization notice regarding document compilation and JavaScript injection.
-              </p>
+
+              <ul className="space-y-2.5 list-none">
+                <li className="flex items-start gap-2.5">
+                  <span className="tag tag-sm tag-accent-outline shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">01</span>
+                  <span className="flex-1 min-w-0">
+                    <strong className="text-[#f0f0f0]">Scope of Authorization:</strong> You represent and warrant that you own the target documents and systems, or possess documented written permission from the owner to compile and inject scripts. Authorization excludes third-party systems without explicit consent.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <span className="tag tag-sm tag-accent-outline shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">02</span>
+                  <span className="flex-1 min-w-0">
+                    <strong className="text-[#f0f0f0]">Payload Execution:</strong> Generated HTML and scripts execute JavaScript dynamically and can trigger security alerts or affect host environments. You retain sole custody and accept responsibility for your use of this software.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <span className="tag tag-sm tag-accent-outline shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">03</span>
+                  <span className="flex-1 min-w-0">
+                    <strong className="text-[#f0f0f0]">Indemnification:</strong> You agree to defend, indemnify, and hold harmless the authors, developers, maintainers, and host from any claims, liabilities, damages, and legal fees arising from your operation of the software.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <span className="tag tag-sm tag-accent-outline shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">04</span>
+                  <span className="flex-1 min-w-0">
+                    <strong className="text-[#f0f0f0]">Warranty Disclaimer:</strong> This software is provided &quot;as is&quot; without warranty of any kind. The authors do not audit or store user scripts and are not liable for any direct, indirect, incidental, or consequential damages.
+                  </span>
+                </li>
+              </ul>
+
+              <div className="pt-2 border-t border-[#2e2e2e] text-[10px] text-[#737373]">
+                These terms are subject to applicable law.
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <label className="flex items-start gap-2.5 p-3 bg-[#0d0d0d] border border-[#2e2e2e] hover:border-[#383838] transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="liability-auth-checkbox"
+                  checked={confirmAuth}
+                  onChange={(e) => setConfirmAuth(e.target.checked)}
+                  className="rounded-none bg-[#141414] border-[#383838] text-[#c30800] accent-[#c30800] mt-0.5 shrink-0"
+                />
+                <span className="text-[11px] text-[#f0f0f0] font-mono leading-snug">
+                  I confirm that I own the target documents and systems or have written permission from the owner. I confirm that my permission covers all targets I compile or test.
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 p-3 bg-[#0d0d0d] border border-[#2e2e2e] hover:border-[#383838] transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="liability-impact-checkbox"
+                  checked={confirmImpact}
+                  onChange={(e) => setConfirmImpact(e.target.checked)}
+                  className="rounded-none bg-[#141414] border-[#383838] text-[#c30800] accent-[#c30800] mt-0.5 shrink-0"
+                />
+                <span className="text-[11px] text-[#f0f0f0] font-mono leading-snug">
+                  I understand that generated artifacts execute code dynamically and can trigger security alerts or affect services. I accept responsibility for my use of this software.
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 p-3 bg-[#0d0d0d] border border-[#2e2e2e] hover:border-[#383838] transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="liability-terms-checkbox"
+                  checked={confirmTerms}
+                  onChange={(e) => setConfirmTerms(e.target.checked)}
+                  className="rounded-none bg-[#141414] border-[#383838] text-[#c30800] accent-[#c30800] mt-0.5 shrink-0"
+                />
+                <span className="text-[11px] text-[#f0f0f0] font-mono leading-snug">
+                  I have read and agree to all Terms of Use. I agree to the indemnification terms, warranty disclaimer, and limitation of liability.
+                </span>
+              </label>
             </div>
           </div>
 
-          <div className="space-y-3 bg-[#141414] p-4 rounded-none border border-[#2e2e2e]">
-            <p className="text-[#f0f0f0] font-semibold text-[11px]">
-              Please review and confirm compliance before operating this platform:
-            </p>
-            <ul className="space-y-2.5 list-none">
-              <li className="flex items-start gap-2.5">
-                <span className="tag tag-sm tag-accent shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">01</span>
-                <span className="flex-1 min-w-0">
-                  <strong className="text-[#f0f0f0]">Source Authorization &amp; Consent:</strong> You certify that you are the verified owner of the target documents and systems, or possess documented written authorization from the owner to inject code and compile payloads.
-                </span>
-              </li>
-              <li className="flex items-start gap-2.5">
-                <span className="tag tag-sm tag-accent shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">02</span>
-                <span className="flex-1 min-w-0">
-                  <strong className="text-[#f0f0f0]">Authorized Research &amp; Testing Only:</strong> This platform is provided strictly for benign development, authorized security audits, and educational demonstrations. Deploying malicious exploits, unauthorized XSS, or malware payloads is strictly prohibited.
-                </span>
-              </li>
-              <li className="flex items-start gap-2.5">
-                <span className="tag tag-sm tag-accent shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">03</span>
-                <span className="flex-1 min-w-0">
-                  <strong className="text-[#f0f0f0]">&quot;AS-IS&quot; Warranty &amp; Liability Waiver:</strong> This tool is provided strictly &quot;as is&quot; without warranty of any kind. Under no circumstances shall the authors or maintainers be liable for any damages, outages, data loss, or security incidents arising from the execution or deployment of generated files.
-                </span>
-              </li>
-              <li className="flex items-start gap-2.5">
-                <span className="tag tag-sm tag-accent shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">04</span>
-                <span className="flex-1 min-w-0">
-                  <strong className="text-[#f0f0f0]">Indemnification &amp; Hold Harmless:</strong> You agree to defend, indemnify, and hold harmless the developers, authors, and hosting providers from any third-party claims, liabilities, damages, regulatory penalties, or legal fees arising from your operational conduct or injected scripts.
-                </span>
-              </li>
-              <li className="flex items-start gap-2.5">
-                <span className="tag tag-sm tag-accent shrink-0 font-bold mt-0.5 min-w-[22px] justify-center">05</span>
-                <span className="flex-1 min-w-0">
-                  <strong className="text-[#f0f0f0]">Zero Custody &amp; Operator Responsibility:</strong> The platform acts as a neutral compilation utility. The authors do not review, audit, store, or endorse user-provided scripts. You maintain exclusive custody and legal accountability for all code executed or exported.
-                </span>
-              </li>
-            </ul>
+          {/* Modal Footer with Gated Agree Button */}
+          <div className="bg-[#141414] px-5 py-4 border-t border-[#383838] flex items-center justify-end">
+            <button
+              id="agree-ownership-button"
+              type="submit"
+              disabled={!canAgree}
+              className={`w-full sm:w-auto px-6 py-2.5 rounded-none font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all duration-150 border ${
+                canAgree
+                  ? 'bg-gradient-to-r from-[#c30800] to-[#770500] hover:from-[#f60a00] hover:to-[#770500] border-[#c30800] text-[#f3f3f7] cursor-pointer shadow-md active:translate-y-px'
+                  : 'bg-[#1a1a1a] border-[#2e2e2e] text-[#737373] cursor-not-allowed opacity-50'
+              }`}
+            >
+              <CheckCircle2 className={`w-4 h-4 ${canAgree ? 'text-[#f3f3f7]' : 'text-[#737373]'}`} />
+              <span>Agree &amp; Confirm Scope</span>
+            </button>
           </div>
-
-          <p className="text-[10px] text-[#737373] text-center pt-1">
-            By proceeding, you assume sole responsibility for your actions, injected code payloads, and compiled artifacts.
-          </p>
-        </div>
-
-        {/* Modal Footer with Agree Button */}
-        <div className="bg-[#141414] px-5 py-4 border-t border-[#383838] flex flex-col sm:flex-row items-center justify-end gap-3">
-          <button
-            id="agree-ownership-button"
-            type="button"
-            onClick={onAgree}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-none bg-gradient-to-r from-[#c30800] to-[#770500] hover:from-[#f60a00] hover:to-[#770500] border border-[#c30800] text-[#f3f3f7] text-xs font-mono font-bold uppercase tracking-wider transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg active:translate-y-px"
-          >
-            <CheckCircle2 className="w-4 h-4 text-[#f3f3f7]" />
-            I Agree &amp; Understand
-          </button>
-        </div>
+        </form>
       </div>
     </div>
   );

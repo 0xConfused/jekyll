@@ -203,21 +203,48 @@ function findTagBoundaries(html, tagStart) {
   return { tagStart, tagEnd: html.indexOf('>', tagStart) + 1 };
 }
 
-// Transform the carrier tag: replace src, remove conflicting srcset/lazy attrs, and inject onload strictly after src
+// Transform the carrier tag: replace exact src attr, remove conflicting srcset/lazy attrs, and inject onload strictly after src
 function transformCarrierTag(originalTag, newSrc, channels) {
   const onloadCode = DEBUG_ONLOAD.replace('@', JSON.stringify(channels));
   let tag = originalTag;
 
-  // Remove srcset, data-src, data-srcset, data-deferred, loading="lazy"
-  tag = tag.replace(/\s+srcset\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s>]+)/gi, '');
-  tag = tag.replace(/\s+data-(?:src|srcset|deferred)\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s>]+)/gi, '');
-  tag = tag.replace(/\s+loading\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s>]+)/gi, '');
-  tag = tag.replace(/\s+onload\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s>]+)/gi, '');
+  // Remove srcset, data-src, data-srcset, data-deferred, loading="lazy", and existing onload outside quotes
+  tag = tag.replace(/(^|\s)(?:srcset|data-(?:src|srcset|deferred)|loading|onload)\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s/>]+)/gi, '');
 
-  // Replace src and inject onload strictly after src
-  const srcRegex = /\bsrc\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^\s>]+)/i;
-  if (srcRegex.test(tag)) {
-    tag = tag.replace(srcRegex, `src="${newSrc}" onload="${onloadCode}"`);
+  // Locate the exact 'src' attribute outside quoted attribute values
+  let srcSpan = null;
+  let i = 0;
+  while (i < tag.length && !/\s/.test(tag[i]) && tag[i] !== '>' && tag[i] !== '/') i++;
+  while (i < tag.length) {
+    while (i < tag.length && (/\s/.test(tag[i]) || tag[i] === '/' || tag[i] === '>')) i++;
+    if (i >= tag.length) break;
+    const nameStart = i;
+    while (i < tag.length && !/[\s=/>]/.test(tag[i])) i++;
+    const attrName = tag.slice(nameStart, i).toLowerCase();
+    let j = i;
+    while (j < tag.length && /\s/.test(tag[j])) j++;
+    let attrEnd = i;
+    if (j < tag.length && tag[j] === '=') {
+      j++;
+      while (j < tag.length && /\s/.test(tag[j])) j++;
+      if (j < tag.length && (tag[j] === '"' || tag[j] === "'")) {
+        const q = tag[j++];
+        while (j < tag.length && tag[j] !== q) j++;
+        if (j < tag.length && tag[j] === q) j++;
+        attrEnd = j;
+      } else {
+        while (j < tag.length && !/[\s>]/.test(tag[j])) j++;
+        attrEnd = j;
+      }
+      if (attrName === 'src' && !srcSpan) {
+        srcSpan = { start: nameStart, end: attrEnd };
+      }
+    }
+    i = Math.max(attrEnd, i);
+  }
+
+  if (srcSpan) {
+    tag = tag.slice(0, srcSpan.start) + `src="${newSrc}" onload="${onloadCode}"` + tag.slice(srcSpan.end);
   } else {
     tag = tag.replace(/^<img\b/i, `<img src="${newSrc}" onload="${onloadCode}"`);
   }
@@ -233,6 +260,7 @@ export const engine = {
     'An image load event handler extracts and executes the payload.',
 
   async execute({ html, js }) {
+    if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
     if (js.includes('\x00'))
       throw new Error('Payload contains NUL bytes, which are used as the terminator.');
     const payload = concatBytes(utf8.encode(js), new Uint8Array([0])); // + 0x00 terminator

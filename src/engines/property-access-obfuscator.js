@@ -73,89 +73,186 @@ function generateSmartVarName(existingIdentifiers) {
  * @returns {{strings: Array<{start:number, end:number}>, masks: Array<{start:number, end:number}>, identifiers: Set<string>}}
  */
 function scanJs(code) {
-  const strings = [], masks = [];
+  const strings = [], masks = [], templateSpans = [];
   const identifiers = new Set();
-  let i = 0;
-  let lastWord = '';
-  const REGEX_CTX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '~', '^', '<', '>']);
-  const KEYWORDS_BEFORE_REGEX = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'instanceof', 'do', 'else']);
+  const REGEX_CTX = new Set([
+    '', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';',
+    '+', '-', '*', '%', '~', '^', '<', '>',
+  ]);
+  const KEYWORDS_BEFORE_REGEX = new Set([
+    'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void',
+    'instanceof', 'do', 'else', 'throw', 'await', 'yield', 'export',
+    'default', 'extends',
+  ]);
 
-  while (i < code.length) {
-    const c = code[i];
+  function scanSegment(startIdx, stopAtBrace) {
+    let i = startIdx;
+    let lastWord = '';
+    let prevBeforeParen = '';
+    const parenHeads = [];
 
-    // Line comment
-    if (c === '/' && code[i + 1] === '/') {
-      const s = i;
-      while (i < code.length && code[i] !== '\n') i++;
-      masks.push({ start: s, end: i });
-      continue;
-    }
-    // Block comment
-    if (c === '/' && code[i + 1] === '*') {
-      const s = i;
-      i += 2;
-      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
-      i += 2;
-      masks.push({ start: s, end: i });
-      continue;
-    }
-    // String or template literal
-    if (c === '"' || c === "'" || c === '`') {
-      let j = i + 1;
-      while (j < code.length) {
-        if (code[j] === '\\') { j += 2; continue; }
-        if (code[j] === c) break;
-        j++;
+    while (i < code.length) {
+      const c = code[i];
+
+      if (stopAtBrace && c === '}') {
+        return i;
       }
-      const span = { start: i, end: j + 1 };
-      strings.push(span);
-      masks.push(span);
-      i = j + 1;
-      lastWord = '';
-      continue;
-    }
-    // Regex literal
-    if (c === '/') {
-      const regexPos = REGEX_CTX.has(lastWord) || KEYWORDS_BEFORE_REGEX.has(lastWord);
-      if (regexPos) {
-        let j = i + 1, inClass = false;
+
+      // Line comment
+      if (c === '/' && code[i + 1] === '/') {
+        const s = i;
+        while (i < code.length && code[i] !== '\n') i++;
+        masks.push({ start: s, end: i });
+        continue;
+      }
+      // Block comment
+      if (c === '/' && code[i + 1] === '*') {
+        const s = i;
+        i += 2;
+        while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
+        i = Math.min(i + 2, code.length);
+        masks.push({ start: s, end: i });
+        continue;
+      }
+      // Quoted string
+      if (c === '"' || c === "'") {
+        let j = i + 1;
         while (j < code.length) {
-          const r = code[j];
-          if (r === '\\') { j += 2; continue; }
-          if (r === '[') inClass = true;
-          else if (r === ']') inClass = false;
-          else if (r === '/' && !inClass) break;
-          else if (r === '\n') break;
+          if (code[j] === '\\') { j += 2; continue; }
+          if (code[j] === c) break;
           j++;
         }
-        if (j < code.length && code[j] === '/' && code[j - 1] !== '\n') {
-          let k = j + 1;
-          while (k < code.length && /[a-z]/i.test(code[k])) k++;
-          masks.push({ start: i, end: k });
-          i = k;
-          lastWord = '';
-          continue;
+        const end = Math.min(j + 1, code.length);
+        const span = { start: i, end };
+        strings.push(span);
+        masks.push(span);
+        i = end;
+        lastWord = '';
+        continue;
+      }
+      // Template literal (tracks nested ${...} and nested backticks)
+      if (c === '`') {
+        const tplStart = i;
+        let segStart = i;
+        let hasInterp = false;
+        i++;
+        while (i < code.length) {
+          if (code[i] === '\\') { i += 2; continue; }
+          if (code[i] === '`') { i++; break; }
+          if (code[i] === '$' && code[i + 1] === '{') {
+            hasInterp = true;
+            masks.push({ start: segStart, end: i + 2 });
+            const closeIdx = scanSegment(i + 2, true);
+            if (closeIdx < code.length) {
+              segStart = closeIdx;
+              i = closeIdx + 1;
+            } else {
+              segStart = code.length;
+              i = code.length;
+            }
+            continue;
+          }
+          i++;
+        }
+        const tplEnd = Math.min(i, code.length);
+        if (!hasInterp) {
+          const span = { start: tplStart, end: tplEnd };
+          strings.push(span);
+          masks.push(span);
+        } else if (segStart < tplEnd) {
+          masks.push({ start: segStart, end: tplEnd });
+        }
+        templateSpans.push({ start: tplStart, end: tplEnd });
+        lastWord = '';
+        continue;
+      }
+      // Regex literal
+      if (c === '/') {
+        const closedCond = lastWord === ')' &&
+          (prevBeforeParen === 'if' || prevBeforeParen === 'while' ||
+           prevBeforeParen === 'for' || prevBeforeParen === 'with');
+        const isPostfix = lastWord === '++' || lastWord === '--';
+        const regexPos = !isPostfix &&
+          (REGEX_CTX.has(lastWord) || KEYWORDS_BEFORE_REGEX.has(lastWord) || closedCond);
+        if (regexPos) {
+          let j = i + 1, inClass = false;
+          while (j < code.length) {
+            const r = code[j];
+            if (r === '\\') { j += 2; continue; }
+            if (r === '[') inClass = true;
+            else if (r === ']') inClass = false;
+            else if (r === '/' && !inClass) break;
+            else if (r === '\n' || r === '\r') break;
+            j++;
+          }
+          if (j < code.length && code[j] === '/') {
+            let k = j + 1;
+            while (k < code.length && /[a-z]/i.test(code[k])) k++;
+            masks.push({ start: i, end: k });
+            i = k;
+            lastWord = '';
+            continue;
+          }
         }
       }
+      // Nested block/object braces inside template ${...}
+      if (stopAtBrace && c === '{') {
+        const closeIdx = scanSegment(i + 1, true);
+        i = closeIdx < code.length ? closeIdx + 1 : code.length;
+        lastWord = '}';
+        continue;
+      }
+      if (c === '(') {
+        parenHeads.push(lastWord);
+        lastWord = '(';
+        i++;
+        continue;
+      }
+      if (c === ')') {
+        prevBeforeParen = parenHeads.pop() || '';
+        lastWord = ')';
+        i++;
+        continue;
+      }
+      if ((c === '+' || c === '-') && code[i + 1] === c) {
+        lastWord = c + c;
+        i += 2;
+        continue;
+      }
+      // Identifiers
+      if (/[$\w]/.test(c)) {
+        let j = i;
+        while (j < code.length && /[$\w]/.test(code[j])) j++;
+        const word = code.slice(i, j);
+        identifiers.add(word);
+        lastWord = word;
+        i = j;
+        continue;
+      }
+      if (!/\s/.test(c)) lastWord = c;
+      i++;
     }
-    // Identifiers
-    if (/[$\w]/.test(c)) {
-      let j = i;
-      while (j < code.length && /[$\w]/.test(code[j])) j++;
-      const word = code.slice(i, j);
-      identifiers.add(word);
-      lastWord = word;
-      i = j;
-      continue;
-    }
-    if (!/\s/.test(c)) lastWord = c;
-    i++;
+    return i;
   }
-  return { strings, masks, identifiers };
+
+  scanSegment(0, false);
+  masks.sort((a, b) => a.start - b.start);
+  strings.sort((a, b) => a.start - b.start);
+  templateSpans.sort((a, b) => a.start - b.start);
+  return { strings, masks, templateSpans, identifiers };
 }
 
-const inMask = (masks, start, end) =>
-  masks.some((m) => start < m.end && end > m.start);
+function inMask(masks, start, end) {
+  let lo = 0, hi = masks.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const m = masks[mid];
+    if (end <= m.start) hi = mid - 1;
+    else if (start >= m.end) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
 
 // ------------------------------------------------------------ dot generator
 /**
@@ -193,10 +290,11 @@ function splitDottedStrings(code) {
   const { strings } = scanJs(code);
   let out = '', cursor = 0, count = 0;
   for (const span of strings) {
+    if (span.start < cursor || span.end - span.start < 2) continue;
     out += code.slice(cursor, span.start);
     const q = code[span.start];
-    // Skip template literals containing expressions to preserve interpolation
-    if (q === '`' && code.slice(span.start, span.end).includes('${')) {
+    // Skip template literals containing expressions or unclosed strings
+    if (code[span.end - 1] !== q || (q === '`' && code.slice(span.start, span.end).includes('${'))) {
       out += code.slice(span.start, span.end);
       cursor = span.end;
       continue;
@@ -224,7 +322,8 @@ function splitDottedStrings(code) {
 }
 
 // ------------------------------------------ pass 2: property camouflaging
-const PROP_RE = /(?:[A-Za-z_$][\w$]*\.)+([A-Za-z_$][\w$]*)/g;
+// Linear-time dotted identifier matcher (prevents O(N^2) ReDoS backtracking on long words)
+const PROP_RE = /[A-Za-z_$\d][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g;
 
 // Properties that should never be altered
 const SENSITIVE_PROPS = new Set([
@@ -241,8 +340,11 @@ const SENSITIVE_PROPS = new Set([
  * @returns {string}
  */
 function applySmartObjectTransform(obj, prop, isLhs, isCall, identifiers) {
-  // Never alter special keywords or built-ins
-  if (obj === 'import' || obj === 'new' || SENSITIVE_PROPS.has(prop)) {
+  // Never alter special meta-properties (import.meta, new.target)
+  if (obj === 'import' || obj === 'new') {
+    return `${obj}.${prop}`;
+  }
+  if (SENSITIVE_PROPS.has(prop)) {
     return `${obj}["${prop}"]`;
   }
 
@@ -298,16 +400,28 @@ function applySmartObjectTransform(obj, prop, isLhs, isCall, identifiers) {
  */
 function transformProperties(code, masks, identifiers) {
   let count = 0;
-  const out = code.replace(PROP_RE, (m, prop, offset) => {
+  const out = code.replace(PROP_RE, (m, offset) => {
+    if (!m.includes('.') || /^\d/.test(m)) return m;
     if (inMask(masks, offset, offset + m.length)) return m;
 
-    const after = code.slice(offset + m.length);
-    const isLhs = /^\s*(?:=(?!=)|\+=|-=|\*=|\/=|%=|\+\+|--)/.test(after);
+    const parts = m.split('.');
+    const after = code.slice(offset + m.length, offset + m.length + 32);
+    const isLhs = /^\s*(?:=(?![=>])|\+=|-=|\*=|\/=|%=|\*\*=|&&=|\|\|=|\?\?=|<<=|>>=|>>>=|&=|\|=|\^=|\+\+|--)/.test(after);
     const isCall = /^\s*\(/.test(after);
 
-    count++;
-    const obj = m.slice(0, m.length - prop.length - 1);
-    return applySmartObjectTransform(obj, prop, isLhs, isCall, identifiers);
+    let acc = parts[0];
+    let startIdx = 1;
+    if (parts[0] === 'import' || parts[0] === 'new') {
+      acc = `${parts[0]}.${parts[1]}`;
+      startIdx = 2;
+    }
+
+    for (let i = startIdx; i < parts.length; i++) {
+      const isLast = i === parts.length - 1;
+      count++;
+      acc = applySmartObjectTransform(acc, parts[i], isLast && isLhs, isLast && isCall, identifiers);
+    }
+    return acc;
   });
   return { code: out, count };
 }
@@ -315,10 +429,21 @@ function transformProperties(code, masks, identifiers) {
 /** Conservative bracket-only property transform (self-healing fallback). */
 function bracketSafeTransform(code) {
   const { masks } = scanJs(code); // FIXED: one scan, not per-match
-  return code.replace(PROP_RE, (m, prop, offset) => {
+  return code.replace(PROP_RE, (m, offset) => {
+    if (!m.includes('.') || /^\d/.test(m)) return m;
     if (inMask(masks, offset, offset + m.length)) return m;
-    const obj = m.slice(0, m.length - prop.length - 1);
-    return `${obj}["${prop}"]`;
+
+    const parts = m.split('.');
+    let acc = parts[0];
+    let startIdx = 1;
+    if (parts[0] === 'import' || parts[0] === 'new') {
+      acc = `${parts[0]}.${parts[1]}`;
+      startIdx = 2;
+    }
+    for (let i = startIdx; i < parts.length; i++) {
+      acc = `${acc}["${parts[i]}"]`;
+    }
+    return acc;
   });
 }
 
@@ -351,14 +476,14 @@ function generateSmartComment() {
  * @returns {{code: string, count: number}}
  */
 function injectSmartDecoyComments(code, maxComments) {
-  const { masks } = scanJs(code);
+  const { masks, templateSpans } = scanJs(code);
   const safePoints = [];
 
   for (let i = 0; i < code.length - 1; i++) {
     const ch = code[i];
     if ((ch === ';' || ch === '}') && code[i + 1] === '\n') {
       const nextLineStart = i + 2;
-      if (!inMask(masks, nextLineStart, nextLineStart + 1)) {
+      if (!inMask(masks, nextLineStart, nextLineStart + 1) && !inMask(templateSpans, nextLineStart, nextLineStart + 1)) {
         safePoints.push(nextLineStart);
       }
     }
@@ -428,7 +553,7 @@ function assertInlineSafe(script) {
  * @returns {boolean}
  */
 function parsesCleanly(js) {
-  if (/\bimport\s|\bexport\s/.test(js)) return true; // module payload: skip Function gate
+  if (/\bimport\s|\bimport\s*\.\s*meta\b|\bexport\s/.test(js)) return true; // module payload: skip Function gate
   try {
     // eslint-disable-next-line no-new-func
     new Function(js);
@@ -504,13 +629,11 @@ export const engine = {
     // Final gates on the exact bytes to be emitted inside <script>...</script>.
     assertInlineSafe(finalJs);
 
-    // Strip inline original JS and inject the camouflaged script
+    // Strip inline original JS and inject the camouflaged script at document end
+    // so synchronous DOM lookups resolve reliably against parsed body elements.
     const stripped = stripOriginalJs(html, js);
     const result = injectBeforeClose(stripped, `<script>\n${finalJs}\n</script>`, {
-      variation: true,
-      allowHead: true,
-      allowBodyStart: true,
-      allowBodyMid: true,
+      variation: false,
     });
 
     const expansion = ((finalJs.length / js.length) * 100).toFixed(1);

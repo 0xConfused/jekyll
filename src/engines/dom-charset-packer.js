@@ -153,12 +153,12 @@ const UNPACKER_TEMPLATE =
   'cs=document.currentScript||document.getElementById(\'_hcp\'),' +
   'P=__PACKED__,W=__WIDTH__,M=__MISSING__,D={},p=0,c,l,o=\'\';' +
   'for(j=0;j<a.length;j++){' +
-  'e=a[j];if(e===cs||e.id===\'_hcp\')continue;' +
+  'e=a[j];if(e===cs||e.id===\'_hcp\'||(e.hasAttribute&&e.hasAttribute(\'data-preview-scrollbars\')))continue;' +
   's=\'<\'+e.tagName.toLowerCase();' +
   'if(e.attributes)for(i=0;i<e.attributes.length;i++)s+=\' \'+e.attributes[i].name+\'="\'+e.attributes[i].value+\'"\';' +
   's+=\'>\';' +
   'if(e.childNodes)for(i=0;i<e.childNodes.length;i++){cn=e.childNodes[i];if(cn.nodeType===3)s+=cn.nodeValue;}' +
-  's+=\'</\'+e.tagName.toLowerCase()+\'>\';' +
+  's+=\'<\'+\'/\'+e.tagName.toLowerCase()+\'>\';' +
   'for(k=0;k<s.length;k++)if(C.indexOf(s[k])<0)C+=s[k];' +
   '}' +
   'C=[...new Set(C)].sort().join(\'\')+M;i=0;' +
@@ -171,13 +171,17 @@ const UNPACKER_TEMPLATE =
   '})();</script>';
 
 function buildBlock(html, js) {
-  if (!js) throw new Error('JavaScript payload is empty.');
+  if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
 
   // Extract unique character sequence directly matching document.all elements
   const charset = extractFromElements(html);
   const baseCharmap = new Set([...charset]);
   const missing = [...new Set([...js].filter((ch) => !baseCharmap.has(ch)))].join('');
   const fullCharset = charset + missing;
+
+  if (fullCharset.length > 8557) {
+    throw new Error(`Document charset exceeds base-${BASE} 2-char symbol capacity (${fullCharset.length} > 8557).`);
+  }
 
   const charmap = new Map();
   for (let i = 0; i < fullCharset.length; i++) charmap.set(fullCharset[i], i);
@@ -188,8 +192,8 @@ function buildBlock(html, js) {
   if (unpack(packed, fullCharset, W) !== js)
     throw new Error('PACKER BUG — round-trip mismatch, output not emitted.');
 
-  const safeJson = JSON.stringify(packed).replace(/<\/script/gi, '<\\/script');
-  const safeMissing = JSON.stringify(missing).replace(/<\/script/gi, '<\\/script');
+  const safeJson = JSON.stringify(packed).replace(/</g, '\\u003c');
+  const safeMissing = JSON.stringify(missing).replace(/</g, '\\u003c');
   const block = UNPACKER_TEMPLATE
     .replace('__WIDTH__', String(W))
     .replace('__MISSING__', () => safeMissing)

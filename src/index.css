@@ -603,3 +603,34 @@ footer {
 .tag-accent svg {
   color: inherit;
 }
+
+.tag-accent-outline {
+  color: var(--color-accent, #c30800);
+  background-color: #141414;
+  border-color: rgba(195, 8, 0, 0.5);
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #383838 #141414;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #141414;
+  border-radius: 0;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #383838;
+  border: 1px solid #2e2e2e;
+  border-radius: 0;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #c30800;
+}

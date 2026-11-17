@@ -113,6 +113,8 @@ export const engine = {
     'It reconstructs and runs the code during page load.',
 
   execute({ html, js }) {
+    if (!js || !js.trim()) throw new Error('JavaScript payload is empty.');
+
     // Byte-accurate invariant: url_idx and char_idx must each fit in one byte
     // (255 reserved as the 'f' sentinel). Checked inside execute (NOT at module
     // scope) so a failure can never break import.meta.glob discovery.
@@ -141,10 +143,7 @@ export const engine = {
     const outJs = renderTemplate(new Date().getFullYear(), JSON.stringify(URLS), payloadB64);
     const stripped = stripOriginalJs(html, js);
     const result = injectBeforeClose(stripped, `<script>\n${outJs}\n</script>`, {
-      variation: true,
-      allowHead: true,
-      allowBodyStart: true,
-      allowBodyMid: true,
+      variation: false,
     });
 
     const directHits = instructions.filter((ins) => ins[0] === 0).length;
