@@ -23,26 +23,6 @@
   --gradient-accent: linear-gradient(135deg, #c30800 0%, #770500 100%);
 }
 
-.theme-dark {
-  --color-bg: #0d0d0d;
-  --color-surface: #1a1a1a;
-  --color-surface-raised: #262626;
-  --color-border: #383838;
-  --color-fg: #f0f0f0;
-  --color-fg-muted: #8c8c8c;
-  --color-accent: #c30800;
-  --color-accent-hover: #f60a00;
-  --color-accent-fg: #f3f3f7;
-  --color-secondary: #c300bb;
-  --color-success: #bbc300;
-  --color-warning: #c36a00;
-  --color-error: #c3005a;
-  --color-accent-tag-fg: #0c0c0f;
-  --color-seed-01: #770500;
-  --color-seed-02: #6b665a;
-  --color-seed-03: #333333;
-}
-
 @font-face {
   font-family: 'Glitch Goblin';
   src: url('/fonts/glitch-goblin.regular.ttf') format('truetype'),

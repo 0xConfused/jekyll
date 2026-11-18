@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   EngineProfile,
   ExecutionResult,
@@ -63,20 +63,8 @@ export default function App() {
     setShowOwnershipWarning(false);
   };
 
-  // Sync view state with URL hash and GitHub Pages SPA redirect
+  // Sync view state with URL hash
   useEffect(() => {
-    try {
-      const redirected = sessionStorage.getItem('redirect');
-      if (redirected) {
-        sessionStorage.removeItem('redirect');
-        const url = new URL(redirected);
-        const path = url.pathname.toLowerCase();
-        if (path.includes('detection') || path.includes('spec') || url.hash.includes('detection')) {
-          setActiveView('detections');
-        }
-      }
-    } catch {}
-
     const handleHashChange = () => {
       const hash = window.location.hash.toLowerCase();
       if (hash.startsWith('#detection') || hash.startsWith('#spec')) {

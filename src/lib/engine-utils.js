@@ -86,7 +86,7 @@ export function extractUniqueChars(html) {
  * @param {string} html
  * @returns {Array<{start: number, end: number}>}
  */
-export function getHtmlMasks(html) {
+function getHtmlMasks(html) {
   const raw = [];
   const patterns = [
     /<!--[\s\S]*?(?:-->|$)/g,
@@ -531,37 +531,3 @@ export async function selectImage(imgTags) {
     tagStart: candidate.tagStart,
   };
 }
-
-/**
- * Parses safe insertion spots and existing attribute names inside an HTML tag.
- * @param {string} html
- * @param {number} tagStart
- * @returns {{ spots: number[], names: string[] }}
- */
-export function parseTagAttributes(html, tagStart) {
-  const tagEnd = findTagClose(html, tagStart);
-  if (tagEnd === -1) return { spots: [tagStart + 4], names: [] };
-
-  const names = [];
-  const spots = [];
-
-  const tagNameMatch = /^<[\w-]+/i.exec(html.slice(tagStart, tagEnd));
-  if (tagNameMatch) {
-    spots.push(tagStart + tagNameMatch[0].length);
-  }
-
-  const attrs = scanTagAttributes(html, tagStart, tagEnd + 1);
-  for (const attr of attrs) {
-    names.push(attr.nameLower);
-    spots.push(attr.end);
-  }
-
-  let endSpot = tagEnd;
-  if (html[endSpot - 1] === '/') endSpot--;
-  spots.push(endSpot);
-
-  return { spots, names };
-}
-
-
-

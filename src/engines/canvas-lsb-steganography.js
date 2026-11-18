@@ -13,7 +13,7 @@
 
 import {
   bytesToBase64, bytesEqual, utf8, concatBytes,
-  findImgTags, selectImage, parseTagAttributes, replaceSpan, secureChoice, log,
+  findImgTags, selectImage, secureChoice, log,
   stripOriginalJs, injectBeforeClose,
 } from '../lib/engine-utils.js';
 

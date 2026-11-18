@@ -14,7 +14,7 @@ export const InjectionSpinner: React.FC<InjectionSpinnerProps> = ({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 100 100"
+      viewBox="0 0 512 512"
       width={size}
       height={size}
       fill="none"
@@ -23,99 +23,114 @@ export const InjectionSpinner: React.FC<InjectionSpinnerProps> = ({
       aria-label="Processing..."
       role="status"
     >
-      {/* Outer Enclosing Ring */}
-      <circle
-        cx="50"
-        cy="50"
-        r="44"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="6.5"
-      />
-
-      {/* Internal Injection Branching Circuit rotated -35 deg */}
-      <g transform="rotate(-35, 50, 50)">
-        {/* Base Socket Foot Tab */}
-        <rect
-          x="43"
-          y="77"
-          width="14"
-          height="7"
-          fill="currentColor"
-          stroke="none"
-        />
-
-        {/* Main Base Connector Housing */}
-        <rect
-          x="36"
-          y="59"
-          width="28"
-          height="18"
+      <g transform="translate(-6.267, -0.691)">
+        <ellipse
+          paintOrder="fill"
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
-          strokeLinejoin="miter"
+          strokeWidth={31}
+          cx="262.267"
+          cy="256.691"
+          rx="216.861"
+          ry="216.861"
         />
-
-        {/* Central Injection Trunk */}
-        <line
-          x1="50"
-          y1="59"
-          x2="50"
-          y2="30.5"
+        <ellipse
+          fill="none"
           stroke="currentColor"
-          strokeWidth="6"
-          strokeLinecap="square"
+          strokeWidth={21}
+          cx="143.988"
+          cy="225.816"
+          rx="30.672"
+          ry="30.672"
         />
-
-        {/* Left Arm Fork */}
+        <ellipse
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={21}
+          cx="233.844"
+          cy="186.936"
+          rx="30.672"
+          ry="30.672"
+        />
+        <ellipse
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={21}
+          cx="323.7"
+          cy="149.784"
+          rx="30.672"
+          ry="30.672"
+        />
         <path
-          d="M 50 51.5 L 26.5 51.5 L 26.5 40"
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
-          strokeLinejoin="miter"
-          strokeLinecap="square"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 248.532 223.224 L 284.82 307.463"
         />
-
-        {/* Right Arm Fork */}
         <path
-          d="M 50 51.5 L 73.5 51.5 L 73.5 40"
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
-          strokeLinejoin="miter"
-          strokeLinecap="square"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 184.79 315.191 L 362.02 238.993"
+          transform="translate(273.156, 277.223) matrix(-1, 0, 0, -1, 0.000012, -0.000016) translate(-273.156, -277.223)"
         />
-
-        {/* Left Terminal Node */}
-        <circle
-          cx="26.5"
-          cy="32.5"
-          r="8"
+        <path
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 157.812 256.704 L 182.868 315.455"
         />
-
-        {/* Center Terminal Node */}
-        <circle
-          cx="50"
-          cy="22.5"
-          r="8"
+        <path
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 336.228 179.16 L 361.284 237.911"
         />
-
-        {/* Right Terminal Node */}
-        <circle
-          cx="73.5"
-          cy="32.5"
-          r="8"
+        <path
           fill="none"
           stroke="currentColor"
-          strokeWidth="6"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 251.988 331.224 L 271.465 377.719"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 325.07 299.04 L 345.732 346.127"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 252.543 329.823 L 324.243 299.039"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 272.199 378.152 L 345.084 346.775"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 309.241 363.316 L 321.213 392.233"
+        />
+        <path
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth={22}
+          d="M 299.563 401.827 L 343.924 382.754"
         />
       </g>
     </svg>
